@@ -39,6 +39,9 @@ importers:
       '@plot/render':
         specifier: workspace:*
         version: link:../../packages/render
+      '@plot/solver-worker':
+        specifier: workspace:*
+        version: link:../../packages/solver-worker
       react:
         specifier: ^19.0.0
         version: 19.2.7
