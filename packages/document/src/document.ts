@@ -38,10 +38,21 @@ const SketchSchema = z.object({
   constraints: z.array(ConstraintSchema),
 })
 
+const ImageSchema = z.object({
+  dataUrl: z.string(),
+  x: z.number(),
+  y: z.number(),
+  umPerPx: z.number(),
+  opacity: z.number(),
+  w: z.number(),
+  h: z.number(),
+})
+
 export const DocumentSchema = z.object({
   version: z.literal(CURRENT_VERSION),
   units: z.enum(UNITS),
   sketch: SketchSchema,
+  image: ImageSchema.nullable().optional(),
 })
 
 export type PlotDocument = z.infer<typeof DocumentSchema>
