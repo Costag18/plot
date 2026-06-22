@@ -13,6 +13,7 @@
     "@plot/document": "workspace:*",
     "@plot/render": "workspace:*",
     "@plot/solver-worker": "workspace:*",
+    "dexie": "^4.0.8",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zustand": "^5.0.0"

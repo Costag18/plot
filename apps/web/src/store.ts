@@ -43,6 +43,7 @@ interface EditorState {
   setSnap: (s: SnapHint | null) => void
   setTypedLength: (v: number | null) => void
   setEditing: (e: Editing | null) => void
+  loadDocument: (doc: PlotDocument) => void
   commit: (next: PlotDocument) => void
   solveAndCommit: (next: PlotDocument) => Promise<void>
   solvePreview: (next: PlotDocument) => Promise<void>
@@ -97,6 +98,10 @@ export const useEditor = create<EditorState>((set, get) => ({
   setSnap: (snap) => set({ snap }),
   setTypedLength: (typedLength) => set({ typedLength }),
   setEditing: (editing) => set({ editing }),
+  loadDocument: (doc) => {
+    ++solveSeq
+    set({ history: createHistory(doc), preview: null, selection: new Set(), draft: null, snap: null, typedLength: null, editing: null })
+  },
   commit: (next) => { ++solveSeq; set((s) => ({ history: commit(s.history, next), preview: null })) },
   solveAndCommit: async (next) => {
     const token = ++solveSeq
