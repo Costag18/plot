@@ -65,25 +65,24 @@ export class CanvasRenderer {
     const ctx = this.gridCtx
     this.clear(ctx)
     const stepWorld = niceStep(TARGET_GRID_PX / camera.scale)
-    const stepPx = stepWorld * camera.scale
-
-    // world coords of the screen's left/top edges
-    const startWorldX = Math.floor((0 - camera.tx) / camera.scale / stepWorld) * stepWorld
-    const startWorldYScreenTop = (camera.ty - 0) / camera.scale
-    const startWorldY = Math.floor(startWorldYScreenTop / stepWorld) * stepWorld
-
     ctx.lineWidth = 1
-    let i = 0
-    for (let sx = startWorldX * camera.scale + camera.tx; sx <= this.w; sx += stepPx, i++) {
-      ctx.strokeStyle = i % 5 === 0 ? COLORS.gridMajor : COLORS.gridMinor
+
+    // Vertical lines: iterate world-X indices across the visible range. Indexing by
+    // world coordinate (ix) keeps the "every 5th line is major" phase stable on pan.
+    const leftWorldX = (0 - camera.tx) / camera.scale
+    const rightWorldX = (this.w - camera.tx) / camera.scale
+    for (let ix = Math.floor(leftWorldX / stepWorld); ix <= Math.ceil(rightWorldX / stepWorld); ix++) {
+      const sx = ix * stepWorld * camera.scale + camera.tx
+      ctx.strokeStyle = ix % 5 === 0 ? COLORS.gridMajor : COLORS.gridMinor
       line(ctx, Math.round(sx) + 0.5, 0, Math.round(sx) + 0.5, this.h)
     }
-    let j = 0
-    for (let wy = startWorldY; ; wy -= stepWorld, j++) {
-      const sy = -wy * camera.scale + camera.ty
-      if (sy > this.h) continue
-      if (sy < 0) break
-      ctx.strokeStyle = j % 5 === 0 ? COLORS.gridMajor : COLORS.gridMinor
+
+    // Horizontal lines: world is y-up, so screen top (sy=0) is the larger world-Y.
+    const bottomWorldY = (camera.ty - this.h) / camera.scale
+    const topWorldY = camera.ty / camera.scale
+    for (let iy = Math.floor(bottomWorldY / stepWorld); iy <= Math.ceil(topWorldY / stepWorld); iy++) {
+      const sy = -iy * stepWorld * camera.scale + camera.ty
+      ctx.strokeStyle = iy % 5 === 0 ? COLORS.gridMajor : COLORS.gridMinor
       line(ctx, 0, Math.round(sy) + 0.5, this.w, Math.round(sy) + 0.5)
     }
   }
