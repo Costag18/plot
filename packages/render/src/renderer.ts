@@ -1,14 +1,22 @@
 import type { PlotDocument } from '@plot/document'
+import { distance } from '@plot/core'
+import { formatLength } from '@plot/document'
+import type { Vec2 } from '@plot/core'
 import { worldToScreen } from './camera'
 import { niceStep } from './grid'
 import type { Camera } from './camera'
 import type { Hit } from './hittest'
+
+export type Draft =
+  | { kind: 'line'; a: Vec2; b: Vec2 }
+  | { kind: 'rect'; a: Vec2; b: Vec2 }
 
 export interface RenderState {
   doc: PlotDocument
   camera: Camera
   selection: ReadonlySet<string>
   hover: Hit | null
+  draft?: Draft | null
 }
 
 const COLORS = {
@@ -104,6 +112,24 @@ export class CanvasRenderer {
       line(ctx, sa.x, sa.y, sb.x, sb.y)
     }
 
+    ctx.font = '12px system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    for (const l of Object.values(sketch.lines)) {
+      const a = sketch.points[l.a]
+      const b = sketch.points[l.b]
+      if (!a || !b) continue
+      const lenUm = distance(a, b)
+      if (lenUm === 0) continue
+      const label = formatLength(lenUm, s.doc.units)
+      const mid = worldToScreen(c, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
+      const w = ctx.measureText(label).width
+      ctx.fillStyle = 'rgba(20,20,20,0.7)'
+      ctx.fillRect(mid.x - w / 2 - 4, mid.y - 9, w + 8, 18)
+      ctx.fillStyle = '#e8e8e8'
+      ctx.fillText(label, mid.x, mid.y)
+    }
+
     ctx.fillStyle = COLORS.point
     for (const p of Object.values(sketch.points)) {
       const sp = worldToScreen(c, p)
@@ -141,6 +167,21 @@ export class CanvasRenderer {
 
     if (s.hover) drawEntity(s.hover.id, COLORS.hover, 1)
     for (const id of s.selection) drawEntity(id, COLORS.selected, 2)
+
+    if (s.draft) {
+      ctx.save()
+      ctx.setLineDash([6, 4])
+      ctx.strokeStyle = COLORS.hover
+      ctx.lineWidth = 1.5
+      const a = worldToScreen(c, s.draft.a)
+      const b = worldToScreen(c, s.draft.b)
+      if (s.draft.kind === 'line') {
+        line(ctx, a.x, a.y, b.x, b.y)
+      } else {
+        ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y))
+      }
+      ctx.restore()
+    }
   }
 }
 
