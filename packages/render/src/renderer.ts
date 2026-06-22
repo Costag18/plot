@@ -11,12 +11,18 @@ export type Draft =
   | { kind: 'line'; a: Vec2; b: Vec2 }
   | { kind: 'rect'; a: Vec2; b: Vec2 }
 
+export type SnapHint =
+  | { kind: 'horizontal'; at: Vec2 }
+  | { kind: 'vertical'; at: Vec2 }
+  | { kind: 'endpoint'; at: Vec2 }
+
 export interface RenderState {
   doc: PlotDocument
   camera: Camera
   selection: ReadonlySet<string>
   hover: Hit | null
   draft?: Draft | null
+  snap?: SnapHint | null
 }
 
 const COLORS = {
@@ -181,6 +187,25 @@ export class CanvasRenderer {
         ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y))
       }
       ctx.restore()
+    }
+
+    if (s.snap) {
+      const at = worldToScreen(c, s.snap.at)
+      if (s.snap.kind === 'endpoint') {
+        ctx.strokeStyle = COLORS.hover
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.arc(at.x, at.y, 7, 0, Math.PI * 2)
+        ctx.stroke()
+      } else {
+        ctx.save()
+        ctx.strokeStyle = s.snap.kind === 'horizontal' ? '#ef4444' : '#22c55e'
+        ctx.globalAlpha = 0.6
+        ctx.lineWidth = 1
+        if (s.snap.kind === 'horizontal') line(ctx, 0, at.y, this.w, at.y)
+        else line(ctx, at.x, 0, at.x, this.h)
+        ctx.restore()
+      }
     }
   }
 }
