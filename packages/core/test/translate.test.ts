@@ -66,4 +66,32 @@ describe('buildSolveRequest', () => {
     })
     expect(req.constraints).toEqual([])
   })
+
+  it('expands a vertical line constraint into its endpoints', () => {
+    const req = buildSolveRequest({
+      ...base,
+      constraints: [{ id: 'c', kind: 'vertical', line: 'L0' }],
+    })
+    expect(req.constraints).toEqual([{ kind: 'vertical', p1: 'p0', p2: 'p1' }])
+  })
+
+  it('expands perpendicular between two lines into endpoint pairs', () => {
+    const req = buildSolveRequest({
+      ...base,
+      constraints: [{ id: 'c', kind: 'perpendicular', l1: 'L0', l2: 'L1' }],
+    })
+    expect(req.constraints).toEqual([
+      { kind: 'perpendicular', l1: ['p0', 'p1'], l2: ['p1', 'p2'] },
+    ])
+  })
+
+  it('expands equalLength between two lines into endpoint pairs', () => {
+    const req = buildSolveRequest({
+      ...base,
+      constraints: [{ id: 'c', kind: 'equalLength', l1: 'L0', l2: 'L1' }],
+    })
+    expect(req.constraints).toEqual([
+      { kind: 'equalLength', l1: ['p0', 'p1'], l2: ['p1', 'p2'] },
+    ])
+  })
 })
