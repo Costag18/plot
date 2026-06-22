@@ -8,16 +8,23 @@ import {
   zoomAt,
   hitTest,
 } from '@plot/render'
-import type { Bounds } from '@plot/render'
+import type { Bounds, SnapHint } from '@plot/render'
 import { useEditor } from './store'
 import {
-  createIdGen,
   addLineSegment,
   addRectangle,
   movePoint,
   setPointFixed,
+  setLineLength,
+  addAxisConstraint,
+  mergePoint,
+  inferAxis,
+  snapPoint,
 } from '@plot/document'
 import type { PlotDocument } from '@plot/document'
+import { idGen } from './ids'
+import { DimensionChip } from './DimensionChip'
+import { EdgeEditor } from './EdgeEditor'
 
 function documentBounds(doc: PlotDocument): Bounds {
   const xs: number[] = []
@@ -35,8 +42,8 @@ function documentBounds(doc: PlotDocument): Bounds {
   }
 }
 
-// Module-level id generator seeded above the seed ids (p0..p3, L0..L3).
-const idGen = createIdGen(1000)
+// World-pixel tolerance for snapping a draft endpoint to an existing point.
+const SNAP_TOL_PX = 8
 
 const layer: React.CSSProperties = { position: 'absolute', inset: 0 }
 
@@ -56,6 +63,7 @@ export function CanvasView() {
   const selection = useEditor((s) => s.selection)
   const hover = useEditor((s) => s.hover)
   const draft = useEditor((s) => s.draft)
+  const snap = useEditor((s) => s.snap)
   const fitNonce = useEditor((s) => s.fitNonce)
   const setCamera = useEditor((s) => s.setCamera)
   const setHover = useEditor((s) => s.setHover)
@@ -96,6 +104,7 @@ export function CanvasView() {
           selection: state.selection,
           hover: state.hover,
           draft: state.draft,
+          snap: state.snap,
         })
       }
     })
@@ -104,12 +113,12 @@ export function CanvasView() {
     return () => ro.disconnect()
   }, [setCamera])
 
-  // Re-render when doc/camera/selection/hover/draft change
+  // Re-render when doc/camera/selection/hover/draft/snap change
   useEffect(() => {
     const renderer = rendererRef.current
     if (!renderer) return
-    renderer.render({ doc, camera, selection, hover, draft })
-  }, [doc, camera, selection, hover, draft])
+    renderer.render({ doc, camera, selection, hover, draft, snap })
+  }, [doc, camera, selection, hover, draft, snap])
 
   // Handle fitNonce: recompute fit when it increments
   // Read doc from store directly so document edits don't re-trigger this effect
@@ -166,24 +175,33 @@ export function CanvasView() {
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return
       }
+      const st = useEditor.getState()
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        useEditor.getState().deleteSelection()
+        st.deleteSelection()
         e.preventDefault()
       } else if (e.key === 'v' || e.key === 'V') {
-        useEditor.getState().setDraft(null)
-        useEditor.getState().setHover(null)
-        useEditor.getState().setTool('select')
+        st.setDraft(null)
+        st.setHover(null)
+        st.setSnap(null)
+        st.setTypedLength(null)
+        st.setTool('select')
       } else if (e.key === 'l' || e.key === 'L') {
-        useEditor.getState().setDraft(null)
-        useEditor.getState().setHover(null)
-        useEditor.getState().setTool('line')
+        st.setDraft(null)
+        st.setHover(null)
+        st.setSnap(null)
+        st.setTypedLength(null)
+        st.setTool('line')
       } else if (e.key === 'r' || e.key === 'R') {
-        useEditor.getState().setDraft(null)
-        useEditor.getState().setHover(null)
-        useEditor.getState().setTool('rect')
+        st.setDraft(null)
+        st.setHover(null)
+        st.setSnap(null)
+        st.setTypedLength(null)
+        st.setTool('rect')
       } else if (e.key === 'Escape') {
-        useEditor.getState().setDraft(null)
-        useEditor.getState().select(null)
+        st.setDraft(null)
+        st.setSnap(null)
+        st.setTypedLength(null)
+        st.select(null)
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -261,7 +279,32 @@ export function CanvasView() {
 
     // Update an in-progress draft (line/rect tools)
     const draftNow = state.draft
-    if ((tool === 'line' || tool === 'rect') && draftNow) {
+    if (tool === 'line' && draftNow && draftNow.kind === 'line') {
+      // Axis inference + endpoint snap while drawing a line.
+      const a = draftNow.a
+      let b = { x: world.x, y: world.y }
+      const axis = inferAxis(a.x, a.y, b.x, b.y)
+      if (axis === 'horizontal') {
+        b = { x: b.x, y: a.y }
+        state.setSnap({ kind: 'horizontal', at: b })
+      } else if (axis === 'vertical') {
+        b = { x: a.x, y: b.y }
+        state.setSnap({ kind: 'vertical', at: b })
+      } else {
+        const present = state.history.present
+        const snapId = snapPoint(present.sketch, world, SNAP_TOL_PX / currentCamera.scale)
+        const p = snapId ? present.sketch.points[snapId] : undefined
+        if (p) {
+          b = { x: p.x, y: p.y }
+          state.setSnap({ kind: 'endpoint', at: b })
+        } else {
+          state.setSnap(null)
+        }
+      }
+      state.setDraft({ ...draftNow, b })
+      return
+    }
+    if (tool === 'rect' && draftNow) {
       state.setDraft({ ...draftNow, b: { x: world.x, y: world.y } })
       return
     }
@@ -273,6 +316,83 @@ export function CanvasView() {
       setHover(hit)
     }
   }
+
+  // Commit the in-progress line draft: build the segment, then apply a typed
+  // length (distance constraint), an inferred H/V axis constraint, and merge each
+  // endpoint that lands on an existing point. Solve + commit, then clear transient
+  // draft/snap/typedLength state. Shared by the second-click and the chip's Enter.
+  function commitLineDraft() {
+    const state = useEditor.getState()
+    const draftNow = state.draft
+    if (!draftNow || draftNow.kind !== 'line') return
+    const present = state.history.present
+    const a = draftNow.a
+    const b = draftNow.b
+
+    // Drop a zero-length draft.
+    if (a.x === b.x && a.y === b.y) {
+      state.setDraft(null)
+      state.setSnap(null)
+      state.setTypedLength(null)
+      return
+    }
+
+    const axis = inferAxis(a.x, a.y, b.x, b.y)
+    const typedLength = state.typedLength
+
+    // Identify the ids the segment will create by diffing keys before/after.
+    const beforePoints = new Set(Object.keys(present.sketch.points))
+    const beforeLines = new Set(Object.keys(present.sketch.lines))
+    let next = addLineSegment(present, idGen, a.x, a.y, b.x, b.y)
+    const newPointIds = Object.keys(next.sketch.points).filter((id) => !beforePoints.has(id))
+    const newLineId = Object.keys(next.sketch.lines).find((id) => !beforeLines.has(id))
+    // addLineSegment emits point a first, then point b.
+    const [newAId, newBId] = newPointIds
+    if (!newLineId || !newAId || !newBId || newPointIds.length !== 2) {
+      // Defensive: bail without corrupting state.
+      state.setDraft(null)
+      state.setSnap(null)
+      state.setTypedLength(null)
+      return
+    }
+
+    if (typedLength !== null) {
+      next = setLineLength(next, idGen, newLineId, typedLength)
+    }
+    if (axis) {
+      next = addAxisConstraint(next, idGen, newLineId, axis)
+    }
+
+    // Merge each new endpoint onto a nearby existing point (excluding the just-made
+    // points). When axis was inferred we don't snap-merge (the axis lock already
+    // moved b), but the start point can still merge.
+    const excludeNew = new Set(newPointIds)
+    const tolWorld = SNAP_TOL_PX / state.camera.scale
+    const mergePairs: Array<[string, string]> = []
+    const startSnap = snapPoint(present.sketch, a, tolWorld, excludeNew)
+    if (startSnap) mergePairs.push([startSnap, newAId])
+    // Only snap-merge the end if it wasn't axis-locked (axis lock owns b).
+    if (!axis) {
+      const endSnap = snapPoint(present.sketch, b, tolWorld, excludeNew)
+      if (endSnap && endSnap !== startSnap) mergePairs.push([endSnap, newBId])
+    }
+    for (const [keepId, dropId] of mergePairs) {
+      next = mergePoint(next, keepId, dropId)
+    }
+
+    state.setDraft(null)
+    state.setSnap(null)
+    state.setTypedLength(null)
+    void state.solveAndCommit(next)
+  }
+
+  // Register the line-commit routine so the DimensionChip can trigger it on Enter.
+  useEffect(() => {
+    useEditor.getState().setCommitLineDraft(commitLineDraft)
+    return () => useEditor.getState().setCommitLineDraft(null)
+    // commitLineDraft reads everything fresh from the store, so it is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const pos = getCanvasPos(e)
@@ -318,17 +438,23 @@ export function CanvasView() {
       const world = screenToWorld(state.camera, pos)
       const draftNow = state.draft
       if (!draftNow) {
-        // First click: start the draft.
-        const a = { x: world.x, y: world.y }
+        // First click: start the draft. For a line, snap the start onto an
+        // existing point if one is nearby.
+        let a = { x: world.x, y: world.y }
+        if (tool === 'line') {
+          const snapId = snapPoint(state.history.present.sketch, world, SNAP_TOL_PX / state.camera.scale)
+          const p = snapId ? state.history.present.sketch.points[snapId] : undefined
+          if (p) a = { x: p.x, y: p.y }
+        }
         state.setDraft({ kind: tool, a, b: a })
+      } else if (tool === 'line') {
+        // Second click: commit via the shared line-commit path.
+        commitLineDraft()
       } else {
-        // Second click: commit geometry and solve.
+        // Rect second click: keep slice-2 behavior (no typed length / inference).
         const present = state.history.present
         const a = draftNow.a
-        const next =
-          tool === 'line'
-            ? addLineSegment(present, idGen, a.x, a.y, world.x, world.y)
-            : addRectangle(present, idGen, a.x, a.y, world.x, world.y)
+        const next = addRectangle(present, idGen, a.x, a.y, world.x, world.y)
         state.setDraft(null)
         void state.solveAndCommit(next)
       }
@@ -337,6 +463,18 @@ export function CanvasView() {
     }
 
     clearPointerState()
+  }
+
+  const onDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const pos = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+    const state = useEditor.getState()
+    const world = screenToWorld(state.camera, pos)
+    const TOL_PX = 8
+    const hit = hitTest(state.history.present.sketch, world, TOL_PX / state.camera.scale)
+    if (hit && hit.kind === 'line') {
+      state.setEditing({ lineId: hit.id, screen: pos })
+    }
   }
 
   const onPointerCancel = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -397,9 +535,12 @@ export function CanvasView() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onDoubleClick={onDoubleClick}
         onPointerCancel={onPointerCancel}
         onPointerLeave={onPointerLeave}
       />
+      <DimensionChip />
+      <EdgeEditor />
     </div>
   )
 }

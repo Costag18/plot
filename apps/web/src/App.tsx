@@ -1,6 +1,7 @@
 import { useEditor } from './store'
 import type { Tool } from './store'
 import { CanvasView } from './CanvasView'
+import { Toast } from './Toast'
 
 const TOOLS: { id: Tool; label: string }[] = [
   { id: 'select', label: 'Select' },
@@ -49,8 +50,9 @@ export function App() {
           {selection.size > 0 ? `Selected: ${[...selection].join(', ')}` : 'Nothing selected'}
         </span>
       </div>
-      <div style={{ position: 'relative', flex: 1 }}>
+      <div style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
         <CanvasView />
+        <Toast />
       </div>
     </div>
   )
