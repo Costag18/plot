@@ -170,10 +170,16 @@ export function CanvasView() {
         useEditor.getState().deleteSelection()
         e.preventDefault()
       } else if (e.key === 'v' || e.key === 'V') {
+        useEditor.getState().setDraft(null)
+        useEditor.getState().setHover(null)
         useEditor.getState().setTool('select')
       } else if (e.key === 'l' || e.key === 'L') {
+        useEditor.getState().setDraft(null)
+        useEditor.getState().setHover(null)
         useEditor.getState().setTool('line')
       } else if (e.key === 'r' || e.key === 'R') {
+        useEditor.getState().setDraft(null)
+        useEditor.getState().setHover(null)
         useEditor.getState().setTool('rect')
       } else if (e.key === 'Escape') {
         useEditor.getState().setDraft(null)

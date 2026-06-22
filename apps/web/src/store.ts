@@ -62,10 +62,13 @@ export const useEditor = create<EditorState>((set, get) => ({
   setTool: (tool) => set({ tool }),
   setDraft: (draft) => set({ draft }),
   setPreview: (preview) => set({ preview }),
-  clearPreview: () => set({ preview: null }),
-  commit: (next) => set((s) => ({ history: commit(s.history, next), preview: null })),
+  clearPreview: () => { ++solveSeq; set({ preview: null }) },
+  commit: (next) => { ++solveSeq; set((s) => ({ history: commit(s.history, next), preview: null })) },
   solveAndCommit: async (next) => {
+    const token = ++solveSeq
     const solved = await solveDoc(next)
+    // Drop stale solves so a newer commit wins.
+    if (token !== solveSeq) return
     set((s) => ({ history: commit(s.history, solved), preview: null }))
   },
   solvePreview: async (next) => {
@@ -76,6 +79,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     set({ preview: solved })
   },
   deleteSelection: () => {
+    ++solveSeq
     const s = get()
     const ids = [...s.selection]
     if (ids.length === 0) return
@@ -83,8 +87,8 @@ export const useEditor = create<EditorState>((set, get) => ({
     for (const id of ids) next = deleteEntity(next, id)
     set({ history: commit(s.history, next), preview: null, selection: new Set() })
   },
-  undo: () => set((s) => ({ history: undo(s.history), preview: null })),
-  redo: () => set((s) => ({ history: redo(s.history), preview: null })),
+  undo: () => { ++solveSeq; set((s) => ({ history: undo(s.history), preview: null })) },
+  redo: () => { ++solveSeq; set((s) => ({ history: redo(s.history), preview: null })) },
   canUndo: () => canUndo(get().history),
   canRedo: () => canRedo(get().history),
   fit: () => set((s) => ({ fitNonce: s.fitNonce + 1 })),
