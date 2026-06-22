@@ -394,6 +394,36 @@ export function CanvasView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // PNG compositor: composites grid + geometry canvases onto a white offscreen
+  // canvas at the current CSS size × devicePixelRatio, skipping the transient overlay.
+  function exportPNG(): Promise<Blob | null> {
+    const grid = gridRef.current
+    const geom = geomRef.current
+    const container = containerRef.current
+    if (!grid || !geom || !container) return Promise.resolve(null)
+    const dpr = window.devicePixelRatio || 1
+    const cssW = container.clientWidth
+    const cssH = container.clientHeight
+    const offscreen = document.createElement('canvas')
+    offscreen.width = cssW * dpr
+    offscreen.height = cssH * dpr
+    const ctx = offscreen.getContext('2d')
+    if (!ctx) return Promise.resolve(null)
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, offscreen.width, offscreen.height)
+    ctx.drawImage(grid, 0, 0)
+    ctx.drawImage(geom, 0, 0)
+    return new Promise<Blob | null>((resolve) => offscreen.toBlob(resolve, 'image/png'))
+  }
+
+  // Register the PNG export routine so App toolbar can call it.
+  useEffect(() => {
+    useEditor.getState().setExportPNG(exportPNG)
+    return () => useEditor.getState().setExportPNG(null)
+    // exportPNG reads canvas refs directly; it is stable for the lifetime of this component.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const pos = getCanvasPos(e)
     const state = useEditor.getState()

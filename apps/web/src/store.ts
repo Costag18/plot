@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { createHistory, commit, undo, redo, canUndo, canRedo, deleteEntity, setLineLength } from '@plot/document'
 import type { History, PlotDocument } from '@plot/document'
+import type { Unit } from '@plot/document'
 import type { Camera, Hit, Draft, SnapHint } from '@plot/render'
 import { buildSolveRequest, applySolveResult } from '@plot/core'
 import { seedDocument } from './seed'
@@ -31,6 +32,9 @@ interface EditorState {
   // trigger the same commit path (inference + snap + merge + typed length) on Enter.
   commitLineDraft: (() => void) | null
   setCommitLineDraft: (fn: (() => void) | null) => void
+  // CanvasView registers its PNG export routine here so App can trigger it.
+  exportPNG: (() => Promise<Blob | null>) | null
+  setExportPNG: (fn: (() => Promise<Blob | null>) | null) => void
   doc: () => PlotDocument
   setCamera: (c: Camera) => void
   setHover: (h: Hit | null) => void
@@ -43,6 +47,7 @@ interface EditorState {
   setSnap: (s: SnapHint | null) => void
   setTypedLength: (v: number | null) => void
   setEditing: (e: Editing | null) => void
+  setUnits: (u: Unit) => void
   loadDocument: (doc: PlotDocument) => void
   commit: (next: PlotDocument) => void
   solveAndCommit: (next: PlotDocument) => Promise<void>
@@ -85,6 +90,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   editing: null,
   commitLineDraft: null,
   setCommitLineDraft: (commitLineDraft) => set({ commitLineDraft }),
+  exportPNG: null,
+  setExportPNG: (exportPNG) => set({ exportPNG }),
   // Preview (transient drag result) takes precedence over committed history.
   doc: () => get().preview ?? get().history.present,
   setCamera: (camera) => set({ camera }),
@@ -98,6 +105,10 @@ export const useEditor = create<EditorState>((set, get) => ({
   setSnap: (snap) => set({ snap }),
   setTypedLength: (typedLength) => set({ typedLength }),
   setEditing: (editing) => set({ editing }),
+  setUnits: (u) => {
+    const present = get().history.present
+    set((s) => ({ history: commit(s.history, { ...present, units: u }), preview: null }))
+  },
   loadDocument: (doc) => {
     ++solveSeq
     set({ history: createHistory(doc), preview: null, selection: new Set(), draft: null, snap: null, typedLength: null, editing: null })
