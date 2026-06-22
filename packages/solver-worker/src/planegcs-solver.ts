@@ -104,7 +104,8 @@ export class PlaneGcsSolver implements ISolver {
         .map((p) => ({ id: p.id, x: p.x, y: p.y }))
 
       return { status: 'ok', points }
-    } catch {
+    } catch (e) {
+      console.error('[PlaneGcsSolver] unexpected error during solve:', e)
       return { status: 'failed', points: [] }
     } finally {
       gcs.destroy_gcs_module()
