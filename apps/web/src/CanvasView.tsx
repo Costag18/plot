@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type React from 'react'
 import {
   CanvasRenderer,
@@ -7,9 +7,12 @@ import {
   panBy,
   zoomAt,
   hitTest,
+  worldToScreen,
 } from '@plot/render'
 import type { Bounds, SnapHint } from '@plot/render'
 import { useEditor } from './store'
+import { loadImage } from './image'
+import { CalibrateInput } from './CalibrateInput'
 import {
   addLineSegment,
   addRectangle,
@@ -68,6 +71,39 @@ export function CanvasView() {
   const setCamera = useEditor((s) => s.setCamera)
   const setHover = useEditor((s) => s.setHover)
 
+  // Cache the decoded reference-image element. It is keyed only on the data URL,
+  // so calibrate (which changes x/y/umPerPx but not dataUrl) does NOT reload it;
+  // a fresh import (new dataUrl) does. `imgTick` bumps on load to force a
+  // re-render once the pixels are ready. `imgEl` is null until loaded or when
+  // there is no image.
+  const imageUrl = doc.image?.dataUrl ?? null
+  const imgElRef = useRef<HTMLImageElement | null>(null)
+  const [imgTick, setImgTick] = useState(0)
+
+  useEffect(() => {
+    if (!imageUrl) {
+      imgElRef.current = null
+      setImgTick((t) => t + 1)
+      return
+    }
+    let cancelled = false
+    void loadImage(imageUrl).then(
+      (el) => {
+        if (cancelled) return
+        imgElRef.current = el
+        setImgTick((t) => t + 1)
+      },
+      () => {
+        if (cancelled) return
+        imgElRef.current = null
+        setImgTick((t) => t + 1)
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [imageUrl])
+
   // Create renderer on mount
   useEffect(() => {
     const grid = gridRef.current
@@ -96,15 +132,22 @@ export function CanvasView() {
         const cam = fitToBounds(documentBounds(currentDoc), cssW, cssH)
         setCamera(cam)
       } else {
-        // Re-render with current state after resize
+        // Re-render with current state after resize (keep the underlay).
         const state = useEditor.getState()
+        const d = state.doc()
+        const imgEl = imgElRef.current
+        const image =
+          d.image && imgEl
+            ? { el: imgEl, x: d.image.x, y: d.image.y, umPerPx: d.image.umPerPx, opacity: d.image.opacity, w: d.image.w, h: d.image.h }
+            : null
         renderer.render({
-          doc: state.doc(),
+          doc: d,
           camera: state.camera,
           selection: state.selection,
           hover: state.hover,
           draft: state.draft,
           snap: state.snap,
+          image,
         })
       }
     })
@@ -113,12 +156,30 @@ export function CanvasView() {
     return () => ro.disconnect()
   }, [setCamera])
 
-  // Re-render when doc/camera/selection/hover/draft/snap change
+  // Re-render when doc/camera/selection/hover/draft/snap/image change.
+  // Build the render-time image from the doc placement + cached element; null
+  // until the element has decoded (or when there is no image).
   useEffect(() => {
     const renderer = rendererRef.current
     if (!renderer) return
-    renderer.render({ doc, camera, selection, hover, draft, snap })
-  }, [doc, camera, selection, hover, draft, snap])
+    const imgEl = imgElRef.current
+    const image =
+      doc.image && imgEl
+        ? {
+            el: imgEl,
+            x: doc.image.x,
+            y: doc.image.y,
+            umPerPx: doc.image.umPerPx,
+            opacity: doc.image.opacity,
+            w: doc.image.w,
+            h: doc.image.h,
+          }
+        : null
+    renderer.render({ doc, camera, selection, hover, draft, snap, image })
+    // imgTick is intentionally a dep: it bumps when the cached element finishes
+    // loading so the underlay paints once pixels are ready.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc, camera, selection, hover, draft, snap, doc.image, imgTick])
 
   // Handle fitNonce: recompute fit when it increments
   // Read doc from store directly so document edits don't re-trigger this effect
@@ -201,6 +262,7 @@ export function CanvasView() {
         st.setDraft(null)
         st.setSnap(null)
         st.setTypedLength(null)
+        st.setCalibrating(null)
         st.select(null)
       }
     }
@@ -305,6 +367,11 @@ export function CanvasView() {
       return
     }
     if (tool === 'rect' && draftNow) {
+      state.setDraft({ ...draftNow, b: { x: world.x, y: world.y } })
+      return
+    }
+    // Calibrate: live-preview the reference segment (no snap/inference).
+    if (tool === 'calibrate' && draftNow && draftNow.kind === 'line') {
       state.setDraft({ ...draftNow, b: { x: world.x, y: world.y } })
       return
     }
@@ -459,6 +526,38 @@ export function CanvasView() {
       return
     }
 
+    // Calibrate: two clicks define a world reference segment over an image
+    // feature. No geometry is created — the second click hands off to
+    // CalibrateInput (via `calibrating`) to collect the real length.
+    if (tool === 'calibrate') {
+      if (!isClick) {
+        clearPointerState()
+        return
+      }
+      const world = screenToWorld(state.camera, pos)
+      const draftNow = state.draft
+      if (!draftNow) {
+        // First click: start the reference segment.
+        state.setDraft({ kind: 'line', a: { x: world.x, y: world.y }, b: { x: world.x, y: world.y } })
+      } else if (draftNow.kind === 'line') {
+        // Second click: anchor the segment, position the length input at the
+        // segment midpoint (in canvas px), and clear the draft.
+        const a = draftNow.a
+        const b = { x: world.x, y: world.y }
+        if (a.x === b.x && a.y === b.y) {
+          // Zero-length reference: ignore, keep waiting for a real second point.
+          clearPointerState()
+          return
+        }
+        const mid = worldToScreen(state.camera, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
+        state.setDraft(null)
+        state.setSnap(null)
+        state.setCalibrating({ a, b, screen: { x: mid.x, y: mid.y } })
+      }
+      clearPointerState()
+      return
+    }
+
     // line / rect: place a click point.
     if (tool === 'line' || tool === 'rect') {
       if (!isClick) {
@@ -571,6 +670,7 @@ export function CanvasView() {
       />
       <DimensionChip />
       <EdgeEditor />
+      <CalibrateInput />
     </div>
   )
 }

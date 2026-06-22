@@ -1,17 +1,39 @@
 import { create } from 'zustand'
-import { createHistory, commit, undo, redo, canUndo, canRedo, deleteEntity, setLineLength } from '@plot/document'
-import type { History, PlotDocument } from '@plot/document'
+import {
+  createHistory,
+  commit,
+  undo,
+  redo,
+  canUndo,
+  canRedo,
+  deleteEntity,
+  setLineLength,
+  setImage as setImageDoc,
+  clearImage as clearImageDoc,
+  setImageOpacity as setImageOpacityDoc,
+} from '@plot/document'
+import type { History, PlotDocument, RefImage } from '@plot/document'
 import type { Unit } from '@plot/document'
 import type { Camera, Hit, Draft, SnapHint } from '@plot/render'
 import { buildSolveRequest, applySolveResult } from '@plot/core'
+import type { Vec2 } from '@plot/core'
 import { seedDocument } from './seed'
 import { getSolver } from './solver'
 import { idGen } from './ids'
 
-export type Tool = 'select' | 'line' | 'rect'
+export type Tool = 'select' | 'line' | 'rect' | 'calibrate'
 
 export interface Editing {
   lineId: string
+  screen: { x: number; y: number }
+}
+
+// Pending calibration: the two world-space reference points (a, b) drawn over an
+// image feature, plus the canvas-pixel midpoint where CalibrateInput renders its
+// length field. Set after the second calibrate click; cleared on commit/cancel.
+export interface Calibrating {
+  a: Vec2
+  b: Vec2
   screen: { x: number; y: number }
 }
 
@@ -28,6 +50,9 @@ interface EditorState {
   snap: SnapHint | null
   typedLength: number | null
   editing: Editing | null
+  // Pending calibration (two reference points + length-input anchor). Null when
+  // no calibration is in progress.
+  calibrating: Calibrating | null
   // CanvasView registers its line-commit routine here so the DimensionChip can
   // trigger the same commit path (inference + snap + merge + typed length) on Enter.
   commitLineDraft: (() => void) | null
@@ -47,6 +72,10 @@ interface EditorState {
   setSnap: (s: SnapHint | null) => void
   setTypedLength: (v: number | null) => void
   setEditing: (e: Editing | null) => void
+  setCalibrating: (c: Calibrating | null) => void
+  setImage: (img: RefImage) => void
+  clearImage: () => void
+  setImageOpacity: (o: number) => void
   setUnits: (u: Unit) => void
   loadDocument: (doc: PlotDocument) => void
   commit: (next: PlotDocument) => void
@@ -88,6 +117,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   snap: null,
   typedLength: null,
   editing: null,
+  calibrating: null,
   commitLineDraft: null,
   setCommitLineDraft: (commitLineDraft) => set({ commitLineDraft }),
   exportPNG: null,
@@ -105,11 +135,20 @@ export const useEditor = create<EditorState>((set, get) => ({
   setSnap: (snap) => set({ snap }),
   setTypedLength: (typedLength) => set({ typedLength }),
   setEditing: (editing) => set({ editing }),
+  setCalibrating: (calibrating) => set({ calibrating }),
+  // Image actions build on the committed present and commit (undoable). The
+  // image (a data URL) lives in the document, so these autosave/export with it.
+  setImage: (img) =>
+    set((s) => ({ history: commit(s.history, setImageDoc(s.history.present, img)), preview: null })),
+  clearImage: () =>
+    set((s) => ({ history: commit(s.history, clearImageDoc(s.history.present)), preview: null })),
+  setImageOpacity: (o) =>
+    set((s) => ({ history: commit(s.history, setImageOpacityDoc(s.history.present, o)), preview: null })),
   setUnits: (u) =>
     set((s) => ({ history: commit(s.history, { ...s.history.present, units: u }), preview: null })),
   loadDocument: (doc) => {
     ++solveSeq
-    set({ history: createHistory(doc), preview: null, selection: new Set(), draft: null, snap: null, typedLength: null, editing: null, hover: null })
+    set({ history: createHistory(doc), preview: null, selection: new Set(), draft: null, snap: null, typedLength: null, editing: null, calibrating: null, hover: null })
   },
   commit: (next) => { ++solveSeq; set((s) => ({ history: commit(s.history, next), preview: null })) },
   solveAndCommit: async (next) => {

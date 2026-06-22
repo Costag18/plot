@@ -5,8 +5,10 @@ import type { Tool } from './store'
 import { CanvasView } from './CanvasView'
 import { Toast } from './Toast'
 import { UNITS } from '@plot/document'
+import type { RefImage } from '@plot/document'
 import { toSVG } from '@plot/render'
 import { downloadJSON, downloadText, downloadBlob, importJSONFile } from './persistence'
+import { loadAndDownscale } from './image'
 
 const TOOLS: { id: Tool; label: string }[] = [
   { id: 'select', label: 'Select' },
@@ -31,8 +33,15 @@ export function App() {
   const setToast = useEditor((s) => s.setToast)
   const exportPNGSlot = useEditor((s) => s.exportPNG)
   const doc = useEditor((s) => s.doc)
+  // Subscribe to history.present.image so the image controls (opacity/Calibrate/
+  // Remove) appear and the slider reflects the current opacity reactively.
+  const image = useEditor((s) => s.history.present.image)
+  const setImage = useEditor((s) => s.setImage)
+  const clearImage = useEditor((s) => s.clearImage)
+  const setImageOpacity = useEditor((s) => s.setImageOpacity)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
 
   async function handlePNG() {
     if (!exportPNGSlot) return
@@ -62,6 +71,26 @@ export function App() {
       loadDocument(parsed)
     } catch {
       setToast('Could not open that file.')
+    }
+  }
+
+  function handleImageClick() {
+    imageInputRef.current?.click()
+  }
+
+  async function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    // Reset so the same file can be re-imported.
+    e.target.value = ''
+    try {
+      const { dataUrl, w, h } = await loadAndDownscale(file)
+      // Default placement: top-left at world origin, 1 mm/px, 50% opacity. The
+      // user then calibrates to set the real-world scale.
+      const img: RefImage = { dataUrl, x: 0, y: 0, umPerPx: 1000, opacity: 0.5, w, h }
+      setImage(img)
+    } catch {
+      setToast('Could not load that image.')
     }
   }
 
@@ -116,6 +145,43 @@ export function App() {
         />
         <button onClick={() => { void handlePNG() }}>PNG</button>
         <button onClick={handleSVG}>SVG</button>
+        <span style={{ width: 1, alignSelf: 'stretch', background: '#ddd' }} />
+        <button onClick={handleImageClick}>Image</button>
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: 'none' }}
+          onChange={(e) => { void handleImageChange(e) }}
+        />
+        {image && (
+          <>
+            <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4 }}>
+              Opacity:
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={image.opacity}
+                onChange={(e) => setImageOpacity(Number(e.target.value))}
+              />
+            </label>
+            <button
+              onClick={() => setTool('calibrate')}
+              aria-pressed={tool === 'calibrate'}
+              style={{
+                fontWeight: tool === 'calibrate' ? 700 : 400,
+                border: tool === 'calibrate' ? '2px solid #1d4ed8' : '1px solid #ccc',
+                borderRadius: 4,
+                padding: '2px 8px',
+              }}
+            >
+              Calibrate
+            </button>
+            <button onClick={clearImage}>Remove</button>
+          </>
+        )}
         <span style={{ marginLeft: 'auto', color: '#666', fontSize: 13 }}>
           {selection.size > 0 ? `Selected: ${[...selection].join(', ')}` : 'Nothing selected'}
         </span>
