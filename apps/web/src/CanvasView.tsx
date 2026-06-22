@@ -179,7 +179,7 @@ export function CanvasView() {
     // imgTick is intentionally a dep: it bumps when the cached element finishes
     // loading so the underlay paints once pixels are ready.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc, camera, selection, hover, draft, snap, doc.image, imgTick])
+  }, [doc, camera, selection, hover, draft, snap, imgTick])
 
   // Handle fitNonce: recompute fit when it increments
   // Read doc from store directly so document edits don't re-trigger this effect

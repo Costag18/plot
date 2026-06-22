@@ -28,8 +28,8 @@ export function CalibrateInput() {
     const c = useEditor.getState().calibrating
     if (!c) return
     const value = inputRef.current?.value ?? ''
-    const um = parseLength(value, units)
     const doc = useEditor.getState().doc()
+    const um = parseLength(value, doc.units)
     if (um !== null && doc.image) {
       const calibrated = calibrateImage(doc.image, c.a.x, c.a.y, c.b.x, c.b.y, um)
       commit(setImageDoc(doc, calibrated))

@@ -127,7 +127,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   setCamera: (camera) => set({ camera }),
   setHover: (hover) => set({ hover }),
   select: (h) => set({ selection: h ? new Set([h.id]) : new Set() }),
-  setTool: (tool) => set({ tool }),
+  setTool: (tool) => set({ tool, draft: null, snap: null, calibrating: null, typedLength: null }),
   setDraft: (draft) => set({ draft }),
   setPreview: (preview) => set({ preview }),
   clearPreview: () => { ++solveSeq; set({ preview: null }) },
