@@ -59,6 +59,7 @@ export function addRectangle(
   return {
     ...doc,
     sketch: {
+      ...doc.sketch,
       points: { ...doc.sketch.points, [p0.id]: p0, [p1.id]: p1, [p2.id]: p2, [p3.id]: p3 },
       lines: { ...doc.sketch.lines, [L0.id]: L0, [L1.id]: L1, [L2.id]: L2, [L3.id]: L3 },
       constraints: [...doc.sketch.constraints, ...cs],
