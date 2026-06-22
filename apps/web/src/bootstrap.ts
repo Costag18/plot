@@ -10,7 +10,7 @@ loadCurrent().then((doc) => {
 let timer: ReturnType<typeof setTimeout> | null = null
 let lastSaved: unknown = null
 
-useEditor.subscribe((s) => {
+const unsubscribe = useEditor.subscribe((s) => {
   const doc = s.history.present
   if (doc === lastSaved) return
   lastSaved = doc
@@ -19,3 +19,11 @@ useEditor.subscribe((s) => {
     void saveCurrent(doc)
   }, 500)
 })
+
+// Avoid a duplicate subscription if this module is hot-reloaded in dev.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    if (timer) clearTimeout(timer)
+    unsubscribe()
+  })
+}

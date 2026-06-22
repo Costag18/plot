@@ -105,13 +105,11 @@ export const useEditor = create<EditorState>((set, get) => ({
   setSnap: (snap) => set({ snap }),
   setTypedLength: (typedLength) => set({ typedLength }),
   setEditing: (editing) => set({ editing }),
-  setUnits: (u) => {
-    const present = get().history.present
-    set((s) => ({ history: commit(s.history, { ...present, units: u }), preview: null }))
-  },
+  setUnits: (u) =>
+    set((s) => ({ history: commit(s.history, { ...s.history.present, units: u }), preview: null })),
   loadDocument: (doc) => {
     ++solveSeq
-    set({ history: createHistory(doc), preview: null, selection: new Set(), draft: null, snap: null, typedLength: null, editing: null })
+    set({ history: createHistory(doc), preview: null, selection: new Set(), draft: null, snap: null, typedLength: null, editing: null, hover: null })
   },
   commit: (next) => { ++solveSeq; set((s) => ({ history: commit(s.history, next), preview: null })) },
   solveAndCommit: async (next) => {
