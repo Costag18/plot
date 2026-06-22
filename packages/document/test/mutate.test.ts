@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createDocument } from '../src/document'
 import { createIdGen } from '../src/ids'
-import { addLineSegment, addRectangle, movePoint, setPointFixed, deleteEntity } from '../src/mutate'
+import { addLineSegment, addRectangle, movePoint, setPointFixed, deleteEntity, setLineLength, addAxisConstraint, mergePoint } from '../src/mutate'
 
 describe('addLineSegment', () => {
   it('adds two points and a line, rounding coordinates', () => {
@@ -71,5 +71,64 @@ describe('deleteEntity', () => {
   it('returns the same doc for an unknown id', () => {
     const doc = createDocument('m')
     expect(deleteEntity(doc, 'ghost')).toBe(doc)
+  })
+})
+
+describe('setLineLength', () => {
+  it('adds a distance constraint when none exists', () => {
+    const doc = addLineSegment(createDocument('m'), createIdGen(), 0, 0, 100, 0)
+    const next = setLineLength(doc, createIdGen(50), 'L2', 3_000_000)
+    const d = next.sketch.constraints.find((c) => c.kind === 'distance')
+    expect(d).toMatchObject({ kind: 'distance', line: 'L2', value: 3_000_000 })
+  })
+  it('updates the existing distance constraint value (no duplicate)', () => {
+    let doc = addLineSegment(createDocument('m'), createIdGen(), 0, 0, 100, 0)
+    doc = setLineLength(doc, createIdGen(50), 'L2', 3_000_000)
+    const next = setLineLength(doc, createIdGen(60), 'L2', 5_000_000)
+    const ds = next.sketch.constraints.filter((c) => c.kind === 'distance')
+    expect(ds).toHaveLength(1)
+    expect(ds[0]).toMatchObject({ value: 5_000_000 })
+  })
+  it('ignores an unknown line', () => {
+    const doc = createDocument('m')
+    expect(setLineLength(doc, createIdGen(), 'nope', 1)).toBe(doc)
+  })
+})
+
+describe('addAxisConstraint', () => {
+  it('adds a horizontal constraint to a line', () => {
+    const doc = addLineSegment(createDocument('m'), createIdGen(), 0, 0, 100, 0)
+    const next = addAxisConstraint(doc, createIdGen(50), 'L2', 'horizontal')
+    expect(next.sketch.constraints).toContainEqual({ id: 'c50', kind: 'horizontal', line: 'L2' })
+  })
+  it('does not duplicate an existing axis constraint', () => {
+    let doc = addLineSegment(createDocument('m'), createIdGen(), 0, 0, 100, 0)
+    doc = addAxisConstraint(doc, createIdGen(50), 'L2', 'horizontal')
+    const next = addAxisConstraint(doc, createIdGen(60), 'L2', 'horizontal')
+    expect(next.sketch.constraints.filter((c) => c.kind === 'horizontal')).toHaveLength(1)
+  })
+})
+
+describe('mergePoint', () => {
+  it('remaps line endpoints from dropId to keepId and removes the dropped point', () => {
+    // two separate segments sharing nothing
+    let doc = addLineSegment(createDocument('m'), createIdGen(), 0, 0, 100, 0) // p0,p1,L2
+    doc = addLineSegment(doc, createIdGen(3), 100, 5, 200, 0) // p3,p4,L5
+    // merge p3 onto p1 (join the two segments at that corner)
+    const next = mergePoint(doc, 'p1', 'p3')
+    expect(next.sketch.points.p3).toBeUndefined()
+    expect(next.sketch.lines.L5!.a).toBe('p1')
+    expect(Object.keys(next.sketch.points)).toHaveLength(3)
+  })
+  it('drops a line that becomes degenerate after merge', () => {
+    const doc = addLineSegment(createDocument('m'), createIdGen(), 0, 0, 100, 0) // p0,p1,L2
+    const next = mergePoint(doc, 'p0', 'p1') // L2 becomes p0->p0
+    expect(next.sketch.lines.L2).toBeUndefined()
+    expect(next.sketch.points.p1).toBeUndefined()
+  })
+  it('returns same doc when ids equal or missing', () => {
+    const doc = addLineSegment(createDocument('m'), createIdGen(), 0, 0, 100, 0)
+    expect(mergePoint(doc, 'p0', 'p0')).toBe(doc)
+    expect(mergePoint(doc, 'p0', 'ghost')).toBe(doc)
   })
 })

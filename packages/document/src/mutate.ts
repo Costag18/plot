@@ -100,6 +100,64 @@ function refsLine(c: Constraint, lineId: string): boolean {
   }
 }
 
+export function addAxisConstraint(
+  doc: PlotDocument,
+  gen: IdGen,
+  lineId: string,
+  axis: 'horizontal' | 'vertical',
+): PlotDocument {
+  if (!doc.sketch.lines[lineId]) return doc
+  const exists = doc.sketch.constraints.some((c) => c.kind === axis && 'line' in c && c.line === lineId)
+  if (exists) return doc
+  const c: Constraint = { id: gen('c'), kind: axis, line: lineId }
+  return { ...doc, sketch: { ...doc.sketch, constraints: [...doc.sketch.constraints, c] } }
+}
+
+export function setLineLength(doc: PlotDocument, gen: IdGen, lineId: string, valueUm: number): PlotDocument {
+  if (!doc.sketch.lines[lineId]) return doc
+  const value = round(valueUm)
+  const idx = doc.sketch.constraints.findIndex((c) => c.kind === 'distance' && 'line' in c && c.line === lineId)
+  if (idx >= 0) {
+    const constraints = doc.sketch.constraints.map((c, i) =>
+      i === idx && c.kind === 'distance' ? { ...c, value } : c,
+    )
+    return { ...doc, sketch: { ...doc.sketch, constraints } }
+  }
+  const c: Constraint = { id: gen('c'), kind: 'distance', line: lineId, value }
+  return { ...doc, sketch: { ...doc.sketch, constraints: [...doc.sketch.constraints, c] } }
+}
+
+export function mergePoint(doc: PlotDocument, keepId: string, dropId: string): PlotDocument {
+  if (keepId === dropId) return doc
+  const s = doc.sketch
+  if (!s.points[keepId] || !s.points[dropId]) return doc
+
+  const lines: typeof s.lines = {}
+  for (const [id, l] of Object.entries(s.lines)) {
+    const a = l.a === dropId ? keepId : l.a
+    const b = l.b === dropId ? keepId : l.b
+    if (a === b) continue // degenerate line collapses
+    lines[id] = { ...l, a, b }
+  }
+  const removedLineIds = new Set(Object.keys(s.lines).filter((id) => !lines[id]))
+
+  const points = { ...s.points }
+  delete points[dropId]
+
+  const constraints: Constraint[] = []
+  for (const c of s.constraints) {
+    if (c.kind === 'coincident') {
+      const a = c.a === dropId ? keepId : c.a
+      const b = c.b === dropId ? keepId : c.b
+      if (a === b) continue
+      constraints.push({ ...c, a, b })
+    } else if (![...removedLineIds].some((lid) => refsLine(c, lid))) {
+      constraints.push(c)
+    }
+  }
+  return { ...doc, sketch: { points, lines, constraints } }
+}
+
 export function deleteEntity(doc: PlotDocument, id: string): PlotDocument {
   const s = doc.sketch
 
