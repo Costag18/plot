@@ -101,17 +101,18 @@ export function CanvasView() {
   }, [doc, camera, selection, hover])
 
   // Handle fitNonce: recompute fit when it increments
+  // Read doc from store directly so document edits don't re-trigger this effect
   useEffect(() => {
     if (fitNonce === 0) return
     const { w, h } = sizeRef.current
     if (w === 0 || h === 0) return
-    const cam = fitToBounds(documentBounds(doc), w, h)
+    const currentDoc = useEditor.getState().history.present
+    const cam = fitToBounds(documentBounds(currentDoc), w, h)
     setCamera(cam)
-  }, [fitNonce, doc, setCamera])
+  }, [fitNonce, setCamera])
 
   // Pointer state stored in refs (not React state, to avoid re-renders in hot path)
   const panningRef = useRef(false)
-  const panStartRef = useRef<{ x: number; y: number } | null>(null)
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
   const hitAtDownRef = useRef<import('@plot/render').Hit | null>(null)
   const pointerDownPosRef = useRef<{ x: number; y: number } | null>(null)
@@ -121,14 +122,20 @@ export function CanvasView() {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top }
   }
 
-  const onWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
-    e.preventDefault()
-    const rect = e.currentTarget.getBoundingClientRect()
-    const cursor = { x: e.clientX - rect.left, y: e.clientY - rect.top }
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
-    const currentCamera = useEditor.getState().camera
-    setCamera(zoomAt(currentCamera, cursor, factor))
-  }
+  // Non-passive wheel listener so preventDefault() actually works (React 19 registers onWheel passive)
+  useEffect(() => {
+    const el = overlayRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => {
+      e.preventDefault()
+      const rect = el.getBoundingClientRect()
+      const cursor = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
+      setCamera(zoomAt(useEditor.getState().camera, cursor, factor))
+    }
+    el.addEventListener('wheel', handler, { passive: false })
+    return () => el.removeEventListener('wheel', handler)
+  }, [setCamera])
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const pos = getCanvasPos(e)
@@ -142,11 +149,9 @@ export function CanvasView() {
     if (hit) {
       // Potential click-select; don't pan
       panningRef.current = false
-      panStartRef.current = null
     } else {
       // Begin panning
       panningRef.current = true
-      panStartRef.current = pos
       lastPointerRef.current = pos
       e.currentTarget.setPointerCapture(e.pointerId)
     }
@@ -190,7 +195,6 @@ export function CanvasView() {
       e.currentTarget.releasePointerCapture(e.pointerId)
     }
     panningRef.current = false
-    panStartRef.current = null
     lastPointerRef.current = null
     hitAtDownRef.current = null
     pointerDownPosRef.current = null
@@ -209,10 +213,10 @@ export function CanvasView() {
       <canvas
         ref={overlayRef}
         style={{ ...layer, touchAction: 'none' }}
-        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
         onPointerLeave={onPointerLeave}
       />
     </div>
