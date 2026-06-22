@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Plot playground</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 24px; }
+      canvas { border: 1px solid #ccc; display: block; margin: 12px 0; }
+      button { font-size: 15px; padding: 8px 14px; }
+      #status { font-variant-numeric: tabular-nums; color: #333; }
+    </style>
+  </head>
+  <body>
+    <h1>Plot — v0 solver loop</h1>
+    <button id="solve">Make 3 × 2 m rectangle</button>
+    <p id="status">Rough quad. Click the button to solve.</p>
+    <canvas id="c" width="640" height="480"></canvas>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
