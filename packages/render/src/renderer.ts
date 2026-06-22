@@ -16,6 +16,16 @@ export type SnapHint =
   | { kind: 'vertical'; at: Vec2 }
   | { kind: 'endpoint'; at: Vec2 }
 
+export interface RenderImage {
+  el: CanvasImageSource
+  x: number
+  y: number
+  umPerPx: number
+  opacity: number
+  w: number
+  h: number
+}
+
 export interface RenderState {
   doc: PlotDocument
   camera: Camera
@@ -23,6 +33,7 @@ export interface RenderState {
   hover: Hit | null
   draft?: Draft | null
   snap?: SnapHint | null
+  image?: RenderImage | null
 }
 
 const COLORS = {
@@ -106,6 +117,17 @@ export class CanvasRenderer {
     this.clear(ctx)
     const { sketch } = s.doc
     const c = s.camera
+
+    if (s.image) {
+      const img = s.image
+      const tl = worldToScreen(c, { x: img.x, y: img.y })
+      const sw = img.w * img.umPerPx * c.scale
+      const sh = img.h * img.umPerPx * c.scale
+      ctx.save()
+      ctx.globalAlpha = Math.max(0, Math.min(1, img.opacity))
+      ctx.drawImage(img.el, tl.x, tl.y, sw, sh)
+      ctx.restore()
+    }
 
     ctx.lineWidth = 2
     ctx.strokeStyle = COLORS.geometry
