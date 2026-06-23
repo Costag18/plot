@@ -16,6 +16,7 @@ import { CalibrateInput } from './CalibrateInput'
 import {
   addLineSegment,
   addRectangle,
+  addPolygon,
   setPointFixed,
   setLineLength,
   addAxisConstraint,
@@ -243,6 +244,13 @@ export function CanvasView() {
   const marqueeRef = useRef<{ start: Vec2 } | null>(null)
   // Whether Space is currently held — left-drag then pans (instead of marquee).
   const spaceDownRef = useRef(false)
+  // Polygon tool: committed world-space vertices clicked so far. The store `draft`
+  // mirrors this (plus the live cursor as a transient last point) for rendering.
+  const polygonRef = useRef<Vec2[]>([])
+  // Indirection so the once-registered global keydown handler can call the latest
+  // finish/cancel closures (which read the polygon ref + store fresh).
+  const finishPolygonRef = useRef<(closed: boolean) => void>(() => {})
+  const cancelPolygonRef = useRef<() => void>(() => {})
 
   const getCanvasPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -373,6 +381,14 @@ export function CanvasView() {
         st.setSnap(null)
         st.setTypedLength(null)
         st.setTool('rect')
+      } else if (e.key === 'p' || e.key === 'P') {
+        // Switching tools clears the in-progress polygon (setTool clears draft;
+        // also drop the committed vertex ref).
+        cancelPolygonRef.current()
+        st.setHover(null)
+        st.setSnap(null)
+        st.setTypedLength(null)
+        st.setTool('polygon')
       } else if (e.key === '0') {
         st.fit()
       } else if (e.key === '=' || e.key === '+') {
@@ -381,7 +397,21 @@ export function CanvasView() {
       } else if (e.key === '-' || e.key === '_') {
         const { w, h } = sizeRef.current
         setCamera(zoomAt(useEditor.getState().camera, { x: w / 2, y: h / 2 }, 1 / 1.1))
+      } else if (e.key === 'Enter') {
+        // Polygon tool: Enter finishes an open polyline (≥2 verts).
+        if (st.tool === 'polygon' && polygonRef.current.length >= 2) {
+          finishPolygonRef.current(false)
+          e.preventDefault()
+        }
+      } else if ((e.key === 'c' || e.key === 'C') && st.tool === 'polygon') {
+        // Polygon tool: `c` finishes a closed polygon (≥3 verts).
+        if (polygonRef.current.length >= 3) {
+          finishPolygonRef.current(true)
+          e.preventDefault()
+        }
       } else if (e.key === 'Escape') {
+        // Polygon tool: cancel the in-progress polygon (clear committed verts).
+        if (st.tool === 'polygon') cancelPolygonRef.current()
         st.setDraft(null)
         st.setSnap(null)
         st.setMarquee(null)
@@ -451,7 +481,7 @@ export function CanvasView() {
       return
     }
 
-    // line / rect / calibrate tools: handled on pointer up (click semantics).
+    // line / rect / polygon / calibrate tools: handled on pointer up (click semantics).
   }
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -523,13 +553,19 @@ export function CanvasView() {
       state.setDraft({ ...draftNow, b })
       return
     }
-    if (tool === 'rect' && draftNow) {
+    if (tool === 'rect' && draftNow && draftNow.kind === 'rect') {
       state.setDraft({ ...draftNow, b: { x: world.x, y: world.y } })
       return
     }
     // Calibrate: live-preview the reference segment (no snap/inference).
     if (tool === 'calibrate' && draftNow && draftNow.kind === 'line') {
       state.setDraft({ ...draftNow, b: { x: world.x, y: world.y } })
+      return
+    }
+    // Polygon: rubber-band the last segment to the cursor (only once a vertex
+    // has been placed).
+    if (tool === 'polygon' && polygonRef.current.length > 0) {
+      state.setDraft({ kind: 'polygon', pts: [...polygonRef.current, { x: world.x, y: world.y }] })
       return
     }
 
@@ -609,6 +645,46 @@ export function CanvasView() {
     state.setTypedLength(null)
     void state.solveAndCommit(next)
   }
+
+  // Finish the in-progress polygon: build it from the committed vertices via
+  // addPolygon on `history.present`, then solve + commit. `closed` joins the last
+  // vertex back to the first. Requires ≥2 vertices (≥3 to close); otherwise cancels.
+  // Clears the committed ref + draft regardless of outcome.
+  function finishPolygon(closed: boolean) {
+    const state = useEditor.getState()
+    let pts = polygonRef.current
+    // A double-click finish lands two pointerup clicks at the same spot, so the
+    // last two committed vertices coincide; drop the trailing duplicate.
+    if (pts.length >= 2) {
+      const last = pts[pts.length - 1]!
+      const prev = pts[pts.length - 2]!
+      if (last.x === prev.x && last.y === prev.y) pts = pts.slice(0, -1)
+    }
+    const minVerts = closed ? 3 : 2
+    if (pts.length < minVerts) {
+      cancelPolygon()
+      return
+    }
+    const present = state.history.present
+    const result = addPolygon(present, idGen, pts, closed)
+    polygonRef.current = []
+    state.setDraft(null)
+    void state.solveAndCommit(result.doc)
+  }
+
+  // Cancel the in-progress polygon: drop committed vertices + draft.
+  function cancelPolygon() {
+    polygonRef.current = []
+    useEditor.getState().setDraft(null)
+  }
+
+  // Register polygon finish/cancel so the global keydown handler can call them.
+  useEffect(() => {
+    finishPolygonRef.current = finishPolygon
+    cancelPolygonRef.current = cancelPolygon
+    // Both read everything fresh from the store/refs, so they are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Register the line-commit routine so the DimensionChip can trigger it on Enter.
   useEffect(() => {
@@ -740,6 +816,32 @@ export function CanvasView() {
       return
     }
 
+    // Polygon: each click appends a vertex; a click within ~10 screen px of the
+    // FIRST vertex (with ≥3 verts) closes the polygon. Pan/drag clicks (moved)
+    // are ignored. Double-click finish is handled in onDoubleClick.
+    if (tool === 'polygon') {
+      if (!isClick) {
+        clearPointerState()
+        return
+      }
+      const world = screenToWorld(state.camera, pos)
+      const pts = polygonRef.current
+      if (pts.length >= 3) {
+        const first = pts[0]!
+        const firstScreen = worldToScreen(state.camera, first)
+        const CLOSE_TOL_PX = 10
+        if (Math.hypot(pos.x - firstScreen.x, pos.y - firstScreen.y) <= CLOSE_TOL_PX) {
+          finishPolygon(true)
+          clearPointerState()
+          return
+        }
+      }
+      polygonRef.current = [...pts, { x: world.x, y: world.y }]
+      state.setDraft({ kind: 'polygon', pts: [...polygonRef.current] })
+      clearPointerState()
+      return
+    }
+
     // line / rect: place a click point.
     if (tool === 'line' || tool === 'rect') {
       if (!isClick) {
@@ -761,7 +863,7 @@ export function CanvasView() {
       } else if (tool === 'line') {
         // Second click: commit via the shared line-commit path.
         commitLineDraft()
-      } else {
+      } else if (draftNow.kind === 'rect') {
         // Rect second click: keep slice-2 behavior (no typed length / inference).
         const present = state.history.present
         const a = draftNow.a
@@ -780,6 +882,13 @@ export function CanvasView() {
     const rect = e.currentTarget.getBoundingClientRect()
     const pos = { x: e.clientX - rect.left, y: e.clientY - rect.top }
     const state = useEditor.getState()
+    // Polygon tool: double-click finishes the polygon (open polyline) instead of
+    // opening the edge editor. The two preceding pointerup clicks already added
+    // the final vertex; finishPolygon trims a trailing duplicate.
+    if (state.tool === 'polygon') {
+      finishPolygon(false)
+      return
+    }
     const world = screenToWorld(state.camera, pos)
     const TOL_PX = 8
     const hit = hitTest(state.history.present.sketch, world, TOL_PX / state.camera.scale)

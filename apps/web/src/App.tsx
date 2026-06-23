@@ -3,6 +3,7 @@ import type React from 'react'
 import { useEditor } from './store'
 import type { Tool } from './store'
 import { CanvasView } from './CanvasView'
+import { EmptyState } from './EmptyState'
 import { StatusBar } from './StatusBar'
 import { Toast } from './Toast'
 import { UNITS } from '@plot/document'
@@ -15,6 +16,7 @@ const TOOLS: { id: Tool; label: string }[] = [
   { id: 'select', label: 'Select' },
   { id: 'line', label: 'Line' },
   { id: 'rect', label: 'Rect' },
+  { id: 'polygon', label: 'Polygon' },
 ]
 
 export function App() {
@@ -189,6 +191,7 @@ export function App() {
       </div>
       <div style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
         <CanvasView />
+        <EmptyState />
         <Toast />
       </div>
       <StatusBar />

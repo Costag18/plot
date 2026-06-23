@@ -24,7 +24,7 @@ import { seedDocument } from './seed'
 import { getSolver } from './solver'
 import { idGen } from './ids'
 
-export type Tool = 'select' | 'line' | 'rect' | 'calibrate'
+export type Tool = 'select' | 'line' | 'rect' | 'polygon' | 'calibrate'
 
 export interface Editing {
   lineId: string
