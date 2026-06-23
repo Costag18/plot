@@ -14,6 +14,8 @@ import {
   allSelectableIds,
   translateEntities,
   duplicateEntities,
+  setCornerAngle,
+  cornerAngleOf,
 } from '@plot/document'
 import type { History, PlotDocument, RefImage } from '@plot/document'
 import type { Unit } from '@plot/document'
@@ -28,6 +30,13 @@ export type Tool = 'select' | 'line' | 'rect' | 'polygon' | 'calibrate'
 
 export interface Editing {
   lineId: string
+  screen: { x: number; y: number }
+}
+
+export interface EditingAngle {
+  vertex: string
+  l1: string
+  l2: string
   screen: { x: number; y: number }
 }
 
@@ -59,6 +68,7 @@ interface EditorState {
   clipboard: string[] | null
   typedLength: number | null
   editing: Editing | null
+  editingAngle: EditingAngle | null
   // Pending calibration (two reference points + length-input anchor). Null when
   // no calibration is in progress.
   calibrating: Calibrating | null
@@ -90,6 +100,7 @@ interface EditorState {
   setSnap: (s: SnapHint | null) => void
   setTypedLength: (v: number | null) => void
   setEditing: (e: Editing | null) => void
+  setEditingAngle: (e: EditingAngle | null) => void
   setCalibrating: (c: Calibrating | null) => void
   setImage: (img: RefImage) => void
   clearImage: () => void
@@ -100,6 +111,7 @@ interface EditorState {
   solveAndCommit: (next: PlotDocument) => Promise<void>
   solvePreview: (next: PlotDocument) => Promise<void>
   setLineLengthAndSolve: (lineId: string, valueUm: number) => Promise<void>
+  setCornerAngleAndSolve: (vertex: string, l1: string, l2: string, valueRad: number) => Promise<void>
   deleteSelection: () => void
   undo: () => void
   redo: () => void
@@ -138,6 +150,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   clipboard: null,
   typedLength: null,
   editing: null,
+  editingAngle: null,
   calibrating: null,
   commitLineDraft: null,
   setCommitLineDraft: (commitLineDraft) => set({ commitLineDraft }),
@@ -183,7 +196,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     const next = translateEntities(s.history.present, [...s.selection], dx, dy)
     await get().solveAndCommit(next)
   },
-  setTool: (tool) => set({ tool, draft: null, snap: null, calibrating: null, typedLength: null, marquee: null }),
+  setTool: (tool) => set({ tool, draft: null, snap: null, calibrating: null, typedLength: null, marquee: null, editingAngle: null }),
   setDraft: (draft) => set({ draft }),
   setPreview: (preview) => set({ preview }),
   clearPreview: () => { ++solveSeq; set({ preview: null }) },
@@ -191,6 +204,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   setSnap: (snap) => set({ snap }),
   setTypedLength: (typedLength) => set({ typedLength }),
   setEditing: (editing) => set({ editing }),
+  setEditingAngle: (editingAngle) => set({ editingAngle }),
   setCalibrating: (calibrating) => set({ calibrating }),
   // Image actions build on the committed present and commit (undoable). The
   // image (a data URL) lives in the document, so these autosave/export with it.
@@ -204,7 +218,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     set((s) => ({ history: commit(s.history, { ...s.history.present, units: u }), preview: null })),
   loadDocument: (doc) => {
     ++solveSeq
-    set({ history: createHistory(doc), preview: null, selection: new Set(), draft: null, snap: null, marquee: null, typedLength: null, editing: null, calibrating: null, hover: null })
+    set({ history: createHistory(doc), preview: null, selection: new Set(), draft: null, snap: null, marquee: null, typedLength: null, editing: null, editingAngle: null, calibrating: null, hover: null })
   },
   commit: (next) => { ++solveSeq; set((s) => ({ history: commit(s.history, next), preview: null })) },
   solveAndCommit: async (next) => {
@@ -242,6 +256,21 @@ export const useEditor = create<EditorState>((set, get) => ({
     } else {
       // Geometry did not reach the requested length — truly over-constrained or diverged.
       set({ preview: null, toast: 'That dimension conflicts — reverted.' })
+    }
+  },
+  setCornerAngleAndSolve: async (vertex, l1, l2, valueRad) => {
+    const token = ++solveSeq
+    const present = get().history.present
+    const next = setCornerAngle(present, idGen, vertex, l1, l2, valueRad)
+    const res = await getSolver().solve(buildSolveRequest(next.sketch))
+    if (token !== solveSeq) return
+    const solvedSketch = applySolvedPoints(next.sketch, res.points)
+    const achieved = cornerAngleOf(solvedSketch, vertex, l1, l2)
+    const tol = (0.5 * Math.PI) / 180 // 0.5 degrees
+    if (achieved !== null && Math.abs(Math.abs(achieved) - Math.abs(valueRad)) <= tol) {
+      set((s) => ({ history: commit(s.history, { ...next, sketch: solvedSketch }), preview: null }))
+    } else {
+      set({ preview: null, toast: 'That angle conflicts — reverted.' })
     }
   },
   deleteSelection: () => {

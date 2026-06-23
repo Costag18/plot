@@ -31,6 +31,7 @@ import type { Vec2 } from '@plot/core'
 import { idGen } from './ids'
 import { DimensionChip } from './DimensionChip'
 import { EdgeEditor } from './EdgeEditor'
+import { AngleEditor } from './AngleEditor'
 
 function documentBounds(doc: PlotDocument): Bounds {
   const xs: number[] = []
@@ -997,7 +998,18 @@ export function CanvasView() {
     const world = screenToWorld(state.camera, pos)
     const TOL_PX = 8
     const hit = hitTest(state.history.present.sketch, world, TOL_PX / state.camera.scale)
-    if (hit && hit.kind === 'line') {
+    if (hit && hit.kind === 'point') {
+      // Corner: a vertex shared by exactly two lines → open the angle editor.
+      const sketch = state.history.present.sketch
+      const incident = Object.values(sketch.lines).filter((l) => l.a === hit.id || l.b === hit.id)
+      if (incident.length === 2) {
+        const l1 = incident[0]!
+        const l2 = incident[1]!
+        state.setEditingAngle({ vertex: hit.id, l1: l1.id, l2: l2.id, screen: pos })
+        return
+      }
+      // Not exactly 2 incident lines — fall through (do nothing for now).
+    } else if (hit && hit.kind === 'line') {
       state.setEditing({ lineId: hit.id, screen: pos })
     }
   }
@@ -1093,6 +1105,7 @@ export function CanvasView() {
       />
       <DimensionChip />
       <EdgeEditor />
+      <AngleEditor />
       <CalibrateInput />
     </div>
   )
