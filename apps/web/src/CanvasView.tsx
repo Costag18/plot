@@ -9,22 +9,24 @@ import {
   hitTest,
   worldToScreen,
 } from '@plot/render'
-import type { Bounds, SnapHint } from '@plot/render'
+import type { Bounds } from '@plot/render'
 import { useEditor } from './store'
 import { loadImage } from './image'
 import { CalibrateInput } from './CalibrateInput'
 import {
   addLineSegment,
   addRectangle,
-  movePoint,
   setPointFixed,
   setLineLength,
   addAxisConstraint,
   mergePoint,
   inferAxis,
   snapPoint,
+  affectedPointIds,
+  translateEntities,
 } from '@plot/document'
 import type { PlotDocument } from '@plot/document'
+import type { Vec2 } from '@plot/core'
 import { idGen } from './ids'
 import { DimensionChip } from './DimensionChip'
 import { EdgeEditor } from './EdgeEditor'
@@ -43,6 +45,28 @@ function documentBounds(doc: PlotDocument): Bounds {
     maxX: Math.max(...xs),
     maxY: Math.max(...ys),
   }
+}
+
+// Marquee box selection: every point whose (x,y) falls inside the normalized box,
+// plus every line whose BOTH endpoints fall inside. `a`/`b` are the drag corners
+// in world coords.
+function entitiesInBox(doc: PlotDocument, a: Vec2, b: Vec2): string[] {
+  const minX = Math.min(a.x, b.x)
+  const maxX = Math.max(a.x, b.x)
+  const minY = Math.min(a.y, b.y)
+  const maxY = Math.max(a.y, b.y)
+  const inside = (id: string): boolean => {
+    const p = doc.sketch.points[id]
+    return !!p && p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY
+  }
+  const ids: string[] = []
+  for (const id of Object.keys(doc.sketch.points)) {
+    if (inside(id)) ids.push(id)
+  }
+  for (const [id, line] of Object.entries(doc.sketch.lines)) {
+    if (inside(line.a) && inside(line.b)) ids.push(id)
+  }
+  return ids
 }
 
 // World-pixel tolerance for snapping a draft endpoint to an existing point.
@@ -67,6 +91,7 @@ export function CanvasView() {
   const hover = useEditor((s) => s.hover)
   const draft = useEditor((s) => s.draft)
   const snap = useEditor((s) => s.snap)
+  const marquee = useEditor((s) => s.marquee)
   const fitNonce = useEditor((s) => s.fitNonce)
   const setCamera = useEditor((s) => s.setCamera)
   const setHover = useEditor((s) => s.setHover)
@@ -147,6 +172,7 @@ export function CanvasView() {
           hover: state.hover,
           draft: state.draft,
           snap: state.snap,
+          marquee: state.marquee,
           image,
         })
       }
@@ -175,11 +201,11 @@ export function CanvasView() {
             h: doc.image.h,
           }
         : null
-    renderer.render({ doc, camera, selection, hover, draft, snap, image })
+    renderer.render({ doc, camera, selection, hover, draft, snap, marquee, image })
     // imgTick is intentionally a dep: it bumps when the cached element finishes
     // loading so the underlay paints once pixels are ready.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc, camera, selection, hover, draft, snap, imgTick])
+  }, [doc, camera, selection, hover, draft, snap, marquee, imgTick])
 
   // Handle fitNonce: recompute fit when it increments
   // Read doc from store directly so document edits don't re-trigger this effect
@@ -195,18 +221,28 @@ export function CanvasView() {
   // Pointer state stored in refs (not React state, to avoid re-renders in hot path)
   const panningRef = useRef(false)
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
-  const hitAtDownRef = useRef<import('@plot/render').Hit | null>(null)
   const pointerDownPosRef = useRef<{ x: number; y: number } | null>(null)
-  // Drag-a-point state (select tool). `last` is the most recent unsolved doc
-  // (point moved to cursor); finishDrag solves from this so the committed result
-  // reflects the final cursor position even if a preview solve is still in flight.
+  // Move-drag state (select tool): drag the whole current selection. `base` is
+  // `history.present` with every affected point fixed, so translating those points
+  // and solving moves the rest of the sketch around the dragged set. `origFixed`
+  // records each affected point's original fixed flag (restored on commit). `last`
+  // is the most recent unsolved doc so finishDrag solves from the final cursor
+  // position even if a preview solve is still in flight. `startWorld` is the world
+  // position at pointerdown; the world delta is applied to `base` each move.
   const dragRef = useRef<{
-    id: string
+    ids: string[]
+    affected: string[]
     base: PlotDocument
-    origFixed: boolean
+    origFixed: Map<string, boolean>
+    startWorld: Vec2
     last: PlotDocument
   } | null>(null)
   const dragMovedRef = useRef(false)
+  // Marquee drag (select tool, left-drag on empty space). Start world position;
+  // the box is `{ a: start, b: cursor }` mirrored into the store for rendering.
+  const marqueeRef = useRef<{ start: Vec2 } | null>(null)
+  // Whether Space is currently held — left-drag then pans (instead of marquee).
+  const spaceDownRef = useRef(false)
 
   const getCanvasPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -228,7 +264,24 @@ export function CanvasView() {
     return () => el.removeEventListener('wheel', handler)
   }, [setCamera])
 
-  // Keyboard: delete, tool shortcuts, escape
+  // Track Space held so left-drag pans (leaving plain left-drag for marquee).
+  useEffect(() => {
+    const onDown = (e: KeyboardEvent) => {
+      if (e.key === ' ') spaceDownRef.current = true
+    }
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key === ' ') spaceDownRef.current = false
+    }
+    window.addEventListener('keydown', onDown)
+    window.addEventListener('keyup', onUp)
+    return () => {
+      window.removeEventListener('keydown', onDown)
+      window.removeEventListener('keyup', onUp)
+    }
+  }, [])
+
+  // Keyboard: undo/redo, select-all, duplicate/copy/paste, nudge, fit/zoom,
+  // delete, tool shortcuts, escape. Guarded while typing in a form field.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       // Ignore when typing in a form field
@@ -237,6 +290,60 @@ export function CanvasView() {
         return
       }
       const st = useEditor.getState()
+      const mod = e.ctrlKey || e.metaKey
+
+      // Ctrl/Cmd shortcuts.
+      if (mod) {
+        const k = e.key.toLowerCase()
+        if (k === 'z') {
+          if (e.shiftKey) st.redo()
+          else st.undo()
+          e.preventDefault()
+          return
+        }
+        if (k === 'y') {
+          st.redo()
+          e.preventDefault()
+          return
+        }
+        if (k === 'a') {
+          st.selectAll()
+          e.preventDefault()
+          return
+        }
+        if (k === 'd') {
+          st.duplicateSelection()
+          e.preventDefault()
+          return
+        }
+        if (k === 'c') {
+          st.copySelection()
+          e.preventDefault()
+          return
+        }
+        if (k === 'v') {
+          st.paste(200000, 200000)
+          e.preventDefault()
+          return
+        }
+        return
+      }
+
+      // Arrow-key nudge (Shift = larger step). Steps in micrometers.
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        if (st.selection.size === 0) return
+        const step = e.shiftKey ? 100000 : 10000
+        let dx = 0
+        let dy = 0
+        if (e.key === 'ArrowLeft') dx = -step
+        else if (e.key === 'ArrowRight') dx = step
+        else if (e.key === 'ArrowUp') dy = step
+        else dy = -step
+        void st.nudge(dx, dy)
+        e.preventDefault()
+        return
+      }
+
       if (e.key === 'Delete' || e.key === 'Backspace') {
         st.deleteSelection()
         e.preventDefault()
@@ -258,9 +365,18 @@ export function CanvasView() {
         st.setSnap(null)
         st.setTypedLength(null)
         st.setTool('rect')
+      } else if (e.key === '0') {
+        st.fit()
+      } else if (e.key === '=' || e.key === '+') {
+        const { w, h } = sizeRef.current
+        setCamera(zoomAt(useEditor.getState().camera, { x: w / 2, y: h / 2 }, 1.1))
+      } else if (e.key === '-' || e.key === '_') {
+        const { w, h } = sizeRef.current
+        setCamera(zoomAt(useEditor.getState().camera, { x: w / 2, y: h / 2 }, 1 / 1.1))
       } else if (e.key === 'Escape') {
         st.setDraft(null)
         st.setSnap(null)
+        st.setMarquee(null)
         st.setTypedLength(null)
         st.setCalibrating(null)
         st.select(null)
@@ -268,7 +384,7 @@ export function CanvasView() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [setCamera])
 
   // ---- Tool pointer handling ----
 
@@ -282,31 +398,52 @@ export function CanvasView() {
     const world = screenToWorld(currentCamera, pos)
     const TOL_PX = 8
     const hit = hitTest(present.sketch, world, TOL_PX / currentCamera.scale)
-    hitAtDownRef.current = hit
+
+    // Pan: middle-button drag, or left-drag while Space is held. Available in
+    // every tool so the canvas can always be panned.
+    if (e.button === 1 || (e.button === 0 && spaceDownRef.current)) {
+      panningRef.current = true
+      lastPointerRef.current = pos
+      e.currentTarget.setPointerCapture(e.pointerId)
+      return
+    }
 
     if (tool === 'select') {
-      if (hit && hit.kind === 'point') {
-        // Begin dragging this point. Fix it so the solver moves the rest.
-        const p = present.sketch.points[hit.id]
-        const origFixed = p ? p.fixed : false
-        const base = setPointFixed(present, hit.id, true)
-        dragRef.current = { id: hit.id, base, origFixed, last: base }
-        dragMovedRef.current = false
+      if (hit) {
+        // Resolve the selection for this press, then drag the whole selection.
+        if (e.shiftKey) {
+          state.toggleSelect(hit.id)
+        } else if (!state.selection.has(hit.id)) {
+          state.setSelection([hit.id])
+        }
+        // Read the (now-updated) selection and begin a move-drag. Fix every point
+        // implied by the selection so translating them moves the rest via solve.
+        const sel = [...useEditor.getState().selection]
+        if (sel.length > 0) {
+          const affected = [...affectedPointIds(present.sketch, sel)]
+          const origFixed = new Map<string, boolean>()
+          let base = present
+          for (const pid of affected) {
+            const p = present.sketch.points[pid]
+            origFixed.set(pid, p ? p.fixed : false)
+            base = setPointFixed(base, pid, true)
+          }
+          dragRef.current = { ids: sel, affected, base, origFixed, startWorld: world, last: base }
+          dragMovedRef.current = false
+        }
         panningRef.current = false
         e.currentTarget.setPointerCapture(e.pointerId)
-      } else if (hit) {
-        // Line hit: potential click-select; don't pan.
-        panningRef.current = false
       } else {
-        // Empty: begin panning.
-        panningRef.current = true
-        lastPointerRef.current = pos
+        // Empty space: begin a marquee box selection.
+        marqueeRef.current = { start: world }
+        state.setMarquee({ a: world, b: world })
+        panningRef.current = false
         e.currentTarget.setPointerCapture(e.pointerId)
       }
       return
     }
 
-    // line / rect tools: handled on pointer up (click semantics).
+    // line / rect / calibrate tools: handled on pointer up (click semantics).
   }
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -315,18 +452,30 @@ export function CanvasView() {
     const tool = state.tool
     const currentCamera = state.camera
     const world = screenToWorld(currentCamera, pos)
+    // Status-bar cursor coordinates track every move.
+    state.setCursor(world)
 
-    // Dragging a point (select tool)
+    // Move-dragging the whole selection (select tool)
     const drag = dragRef.current
     if (drag) {
       const downPos = pointerDownPosRef.current
       if (downPos && Math.hypot(pos.x - downPos.x, pos.y - downPos.y) >= 4) {
         dragMovedRef.current = true
       }
-      const moved = movePoint(drag.base, drag.id, world.x, world.y)
+      const dx = world.x - drag.startWorld.x
+      const dy = world.y - drag.startWorld.y
+      // Translate every affected point on the fixed base, then solve.
+      const moved = translateEntities(drag.base, drag.ids, dx, dy)
       drag.last = moved
       // Fire-and-forget; latest-wins inside the store drops stale solves.
       void state.solvePreview(moved)
+      return
+    }
+
+    // Marquee box (select tool, left-drag on empty space)
+    const marq = marqueeRef.current
+    if (marq) {
+      state.setMarquee({ a: marq.start, b: world })
       return
     }
 
@@ -496,17 +645,36 @@ export function CanvasView() {
     const state = useEditor.getState()
     const tool = state.tool
 
-    // Finish a point drag.
+    // Finish a selection move-drag.
     const drag = dragRef.current
     if (drag) {
       e.currentTarget.releasePointerCapture(e.pointerId)
       if (dragMovedRef.current) {
         finishDrag(drag)
       } else {
-        // No real movement: treat as a click-select, discard the transient preview.
+        // No real movement: selection was already resolved at pointerdown; just
+        // discard the transient preview.
         state.clearPreview()
-        state.select(hitAtDownRef.current)
       }
+      clearPointerState()
+      return
+    }
+
+    // Finish a marquee box selection.
+    const marq = marqueeRef.current
+    if (marq) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+      const world = screenToWorld(state.camera, pos)
+      const downPos = pointerDownPosRef.current
+      const dragged = downPos ? Math.hypot(pos.x - downPos.x, pos.y - downPos.y) >= 4 : false
+      if (dragged) {
+        const ids = entitiesInBox(state.history.present, marq.start, world)
+        state.setSelection(ids)
+      } else {
+        // Plain click on empty space: clear the selection.
+        state.select(null)
+      }
+      state.setMarquee(null)
       clearPointerState()
       return
     }
@@ -518,9 +686,6 @@ export function CanvasView() {
     if (tool === 'select') {
       if (panningRef.current) {
         e.currentTarget.releasePointerCapture(e.pointerId)
-      } else if (isClick) {
-        // Click select / clear (hitAtDown captured at pointerdown).
-        state.select(hitAtDownRef.current)
       }
       clearPointerState()
       return
@@ -620,6 +785,13 @@ export function CanvasView() {
       } else {
         useEditor.getState().clearPreview()
       }
+    } else if (marqueeRef.current) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      } catch {
+        // pointer may already be released
+      }
+      useEditor.getState().setMarquee(null)
     } else if (panningRef.current) {
       try {
         e.currentTarget.releasePointerCapture(e.pointerId)
@@ -636,22 +808,26 @@ export function CanvasView() {
     }
   }
 
-  // Commit a drag: restore the point's original fixed flag, then solve+commit.
-  // Solve from `drag.last` (point at the final cursor) so the committed result
-  // matches the cursor even if a preview solve is still in flight.
+  // Commit a move-drag: restore each affected point's ORIGINAL fixed flag (captured
+  // at drag start), then solve+commit. Solve from `drag.last` (points at the final
+  // cursor) so the committed result matches the cursor even if a preview solve is
+  // still in flight.
   function finishDrag(drag: NonNullable<typeof dragRef.current>) {
     const state = useEditor.getState()
-    const restored = setPointFixed(drag.last, drag.id, drag.origFixed)
+    let restored = drag.last
+    for (const pid of drag.affected) {
+      restored = setPointFixed(restored, pid, drag.origFixed.get(pid) ?? false)
+    }
     void state.solveAndCommit(restored)
   }
 
   function clearPointerState() {
     panningRef.current = false
     lastPointerRef.current = null
-    hitAtDownRef.current = null
     pointerDownPosRef.current = null
     dragRef.current = null
     dragMovedRef.current = false
+    marqueeRef.current = null
   }
 
   return (

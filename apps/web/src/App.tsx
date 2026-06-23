@@ -3,6 +3,7 @@ import type React from 'react'
 import { useEditor } from './store'
 import type { Tool } from './store'
 import { CanvasView } from './CanvasView'
+import { StatusBar } from './StatusBar'
 import { Toast } from './Toast'
 import { UNITS } from '@plot/document'
 import type { RefImage } from '@plot/document'
@@ -190,6 +191,7 @@ export function App() {
         <CanvasView />
         <Toast />
       </div>
+      <StatusBar />
     </div>
   )
 }

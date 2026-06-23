@@ -11,6 +11,9 @@ import {
   setImage as setImageDoc,
   clearImage as clearImageDoc,
   setImageOpacity as setImageOpacityDoc,
+  allSelectableIds,
+  translateEntities,
+  duplicateEntities,
 } from '@plot/document'
 import type { History, PlotDocument, RefImage } from '@plot/document'
 import type { Unit } from '@plot/document'
@@ -48,6 +51,12 @@ interface EditorState {
   preview: PlotDocument | null
   toast: string | null
   snap: SnapHint | null
+  // Marquee selection box in world coords (drag-to-select). Null when not active.
+  marquee: { a: Vec2; b: Vec2 } | null
+  // Last pointer position in world coords (for the status bar). Null until first move.
+  cursor: Vec2 | null
+  // Copied entity ids, captured on copy; pasted by re-duplicating from the present.
+  clipboard: string[] | null
   typedLength: number | null
   editing: Editing | null
   // Pending calibration (two reference points + length-input anchor). Null when
@@ -64,6 +73,15 @@ interface EditorState {
   setCamera: (c: Camera) => void
   setHover: (h: Hit | null) => void
   select: (h: Hit | null) => void
+  setSelection: (ids: string[]) => void
+  toggleSelect: (id: string) => void
+  setMarquee: (m: { a: Vec2; b: Vec2 } | null) => void
+  setCursor: (c: Vec2 | null) => void
+  selectAll: () => void
+  duplicateSelection: (dx?: number, dy?: number) => void
+  copySelection: () => void
+  paste: (dx: number, dy: number) => void
+  nudge: (dx: number, dy: number) => Promise<void>
   setTool: (t: Tool) => void
   setDraft: (d: Draft | null) => void
   setPreview: (d: PlotDocument | null) => void
@@ -115,6 +133,9 @@ export const useEditor = create<EditorState>((set, get) => ({
   preview: null,
   toast: null,
   snap: null,
+  marquee: null,
+  cursor: null,
+  clipboard: null,
   typedLength: null,
   editing: null,
   calibrating: null,
@@ -127,7 +148,41 @@ export const useEditor = create<EditorState>((set, get) => ({
   setCamera: (camera) => set({ camera }),
   setHover: (hover) => set({ hover }),
   select: (h) => set({ selection: h ? new Set([h.id]) : new Set() }),
-  setTool: (tool) => set({ tool, draft: null, snap: null, calibrating: null, typedLength: null }),
+  setSelection: (ids) => set({ selection: new Set(ids) }),
+  toggleSelect: (id) =>
+    set((s) => {
+      const next = new Set(s.selection)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return { selection: next }
+    }),
+  setMarquee: (marquee) => set({ marquee }),
+  setCursor: (cursor) => set({ cursor }),
+  selectAll: () => set((s) => ({ selection: new Set(allSelectableIds(s.history.present.sketch)) })),
+  duplicateSelection: (dx = 200000, dy = 200000) => {
+    ++solveSeq
+    const s = get()
+    const ids = [...s.selection]
+    if (ids.length === 0) return
+    const { doc, newIds } = duplicateEntities(s.history.present, idGen, ids, dx, dy)
+    set({ history: commit(s.history, doc), preview: null, selection: new Set(newIds) })
+  },
+  copySelection: () => set((s) => ({ clipboard: [...s.selection] })),
+  paste: (dx, dy) => {
+    const s = get()
+    const ids = s.clipboard
+    if (!ids || ids.length === 0) return
+    ++solveSeq
+    const { doc, newIds } = duplicateEntities(s.history.present, idGen, ids, dx, dy)
+    set({ history: commit(s.history, doc), preview: null, selection: new Set(newIds) })
+  },
+  nudge: async (dx, dy) => {
+    const s = get()
+    if (s.selection.size === 0) return
+    const next = translateEntities(s.history.present, [...s.selection], dx, dy)
+    await get().solveAndCommit(next)
+  },
+  setTool: (tool) => set({ tool, draft: null, snap: null, calibrating: null, typedLength: null, marquee: null }),
   setDraft: (draft) => set({ draft }),
   setPreview: (preview) => set({ preview }),
   clearPreview: () => { ++solveSeq; set({ preview: null }) },
@@ -148,7 +203,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     set((s) => ({ history: commit(s.history, { ...s.history.present, units: u }), preview: null })),
   loadDocument: (doc) => {
     ++solveSeq
-    set({ history: createHistory(doc), preview: null, selection: new Set(), draft: null, snap: null, typedLength: null, editing: null, calibrating: null, hover: null })
+    set({ history: createHistory(doc), preview: null, selection: new Set(), draft: null, snap: null, marquee: null, typedLength: null, editing: null, calibrating: null, hover: null })
   },
   commit: (next) => { ++solveSeq; set((s) => ({ history: commit(s.history, next), preview: null })) },
   solveAndCommit: async (next) => {
