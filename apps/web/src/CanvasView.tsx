@@ -807,7 +807,6 @@ export function CanvasView() {
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     // ---- Touch gestures (mouse/pen never enter this block) ----
     if (e.pointerType === 'touch') {
-      const pos = getCanvasPos(e)
       touchesRef.current.delete(e.pointerId)
       const remaining = touchesRef.current.size
       // Any drop below two fingers ends the pinch. We require a fresh two-finger
@@ -818,18 +817,15 @@ export function CanvasView() {
         panningRef.current = false
         lastPointerRef.current = null
       }
-      if (remaining === 0) {
-        // Last finger up. If we were one-finger panning the select tool, just tear
-        // the pan state down (no pointer capture was taken for touch). Otherwise let
-        // the draw-tool tap/click path run so a tap still places a point.
-        if (panningRef.current) {
-          clearPointerState()
-          return
-        }
-        // Draw tools: fall through to the shared tap handler below.
-        void pos
-      } else {
+      if (remaining > 0) {
         // Fingers still down (pinch in progress, or transitioning): swallow.
+        return
+      }
+      // Last finger up. If we were one-finger panning the select tool, just tear the
+      // pan state down (no pointer capture was taken for touch). Otherwise fall
+      // through to the shared tap/click path so a draw-tool tap still places a point.
+      if (panningRef.current) {
+        clearPointerState()
         return
       }
     }
