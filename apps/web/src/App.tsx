@@ -18,6 +18,7 @@ const TOOLS: { id: Tool; label: string }[] = [
   { id: 'line', label: 'Line' },
   { id: 'rect', label: 'Rect' },
   { id: 'polygon', label: 'Polygon' },
+  { id: 'rotate', label: 'Rotate' },
 ]
 
 export function App() {

@@ -26,6 +26,7 @@ import {
   affectedPointIds,
   connectedPointIds,
   translateEntities,
+  rotateEntities,
 } from '@plot/document'
 import type { PlotDocument } from '@plot/document'
 import { snapToGrid } from '@plot/core'
@@ -251,6 +252,17 @@ export function CanvasView() {
     last: PlotDocument
   } | null>(null)
   const dragMovedRef = useRef(false)
+  // Rotate tool drag state. `center` is the centroid of affected points (constant
+  // for the gesture). `startAngle` is atan2 at pointerdown. `base` is the committed
+  // doc at drag start. `ids` are the selected entity ids.
+  // Note: geometry pinned by horizontal/vertical constraints will snap back when the
+  // solver runs on commit — that is expected CAD behavior.
+  const rotatingRef = useRef<{
+    center: { x: number; y: number }
+    startAngle: number
+    base: PlotDocument
+    ids: string[]
+  } | null>(null)
   // Marquee drag (select tool, left-drag on empty space). Start world position;
   // the box is `{ a: start, b: cursor }` mirrored into the store for rendering.
   const marqueeRef = useRef<{ start: Vec2 } | null>(null)
@@ -422,6 +434,11 @@ export function CanvasView() {
         st.setSnap(null)
         st.setTypedLength(null)
         st.setTool('polygon')
+      } else if (e.key === 'o' || e.key === 'O') {
+        st.setHover(null)
+        st.setSnap(null)
+        st.setTypedLength(null)
+        st.setTool('rotate')
       } else if (e.key === '0') {
         st.fit()
       } else if (e.key === '=' || e.key === '+') {
@@ -556,6 +573,25 @@ export function CanvasView() {
       return
     }
 
+    if (tool === 'rotate') {
+      const sel = [...state.selection]
+      if (sel.length === 0) return
+      const affected = affectedPointIds(present.sketch, sel)
+      if (affected.size === 0) return
+      // Compute centroid of affected points.
+      let sumX = 0
+      let sumY = 0
+      for (const pid of affected) {
+        const p = present.sketch.points[pid]
+        if (p) { sumX += p.x; sumY += p.y }
+      }
+      const center = { x: sumX / affected.size, y: sumY / affected.size }
+      const startAngle = Math.atan2(world.y - center.y, world.x - center.x)
+      rotatingRef.current = { center, startAngle, base: present, ids: sel }
+      e.currentTarget.setPointerCapture(e.pointerId)
+      return
+    }
+
     // line / rect / polygon / calibrate tools: handled on pointer up (click semantics).
   }
 
@@ -615,6 +651,16 @@ export function CanvasView() {
       drag.last = moved
       // Fire-and-forget; latest-wins inside the store drops stale solves.
       void state.solvePreview(moved)
+      return
+    }
+
+    // Rotate tool drag: compute angular delta from drag start and show a live preview.
+    const rotating = rotatingRef.current
+    if (rotating) {
+      const ang = Math.atan2(world.y - rotating.center.y, world.x - rotating.center.x)
+      const delta = ang - rotating.startAngle
+      const previewed = rotateEntities(rotating.base, rotating.ids, rotating.center.x, rotating.center.y, delta)
+      state.setPreview(previewed)
       return
     }
 
@@ -893,6 +939,24 @@ export function CanvasView() {
       return
     }
 
+    // Finish a rotate drag: compute final angle delta and solveAndCommit.
+    const rotating = rotatingRef.current
+    if (rotating) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+      const world = screenToWorld(state.camera, pos)
+      const ang = Math.atan2(world.y - rotating.center.y, world.x - rotating.center.x)
+      const delta = ang - rotating.startAngle
+      // Only commit if the user actually dragged (delta > 1e-6 radians).
+      if (Math.abs(delta) > 1e-6) {
+        const finalDoc = rotateEntities(rotating.base, rotating.ids, rotating.center.x, rotating.center.y, delta)
+        void state.solveAndCommit(finalDoc)
+      } else {
+        state.clearPreview()
+      }
+      rotatingRef.current = null
+      return
+    }
+
     // Finish a marquee box selection.
     const marq = marqueeRef.current
     if (marq) {
@@ -1077,6 +1141,13 @@ export function CanvasView() {
       } else {
         useEditor.getState().clearPreview()
       }
+    } else if (rotatingRef.current) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      } catch {
+        // pointer may already be released
+      }
+      useEditor.getState().clearPreview()
     } else if (marqueeRef.current) {
       try {
         e.currentTarget.releasePointerCapture(e.pointerId)
@@ -1119,6 +1190,7 @@ export function CanvasView() {
     pointerDownPosRef.current = null
     dragRef.current = null
     dragMovedRef.current = false
+    rotatingRef.current = null
     marqueeRef.current = null
     // Touch gesture state. clearPointerState only runs when no fingers remain (the
     // touch up/cancel paths gate on remaining === 0), so it's safe to fully reset.
