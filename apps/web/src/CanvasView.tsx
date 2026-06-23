@@ -223,6 +223,13 @@ export function CanvasView() {
   const panningRef = useRef(false)
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
   const pointerDownPosRef = useRef<{ x: number; y: number } | null>(null)
+  // Active touch pointers, keyed by pointerId, in canvas-local coords. Mouse/pen
+  // never enter this map (all touch logic is gated on `e.pointerType === 'touch'`).
+  const touchesRef = useRef(new Map<number, { x: number; y: number }>())
+  // Two-finger pinch state. `startDist`/`lastDist` are the touch-pair distances and
+  // `lastMid` the pair midpoint (all canvas-local). Null when not pinching. While
+  // non-null, single-finger pan/marquee/draw are suppressed for touch.
+  const pinchRef = useRef<{ startDist: number; lastDist: number; lastMid: { x: number; y: number } } | null>(null)
   // Move-drag state (select tool): drag the whole current selection. `base` is
   // `history.present` with every affected point fixed, so translating those points
   // and solving moves the rest of the sketch around the dragged set. `origFixed`
@@ -255,6 +262,18 @@ export function CanvasView() {
   const getCanvasPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
     return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  }
+
+  // Distance + midpoint of the two active touch pointers (canvas-local). Returns
+  // null unless exactly two touches are tracked. Used to drive pinch-zoom.
+  const pinchMetrics = (): { dist: number; mid: { x: number; y: number } } | null => {
+    const pts = [...touchesRef.current.values()]
+    if (pts.length !== 2) return null
+    const [a, b] = pts as [{ x: number; y: number }, { x: number; y: number }]
+    return {
+      dist: Math.hypot(b.x - a.x, b.y - a.y),
+      mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+    }
   }
 
   // Non-passive wheel listener so preventDefault() actually works (React 19 registers onWheel passive)
@@ -428,6 +447,41 @@ export function CanvasView() {
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const pos = getCanvasPos(e)
+
+    // ---- Touch gestures (mouse/pen never enter this block) ----
+    if (e.pointerType === 'touch') {
+      touchesRef.current.set(e.pointerId, pos)
+      const count = touchesRef.current.size
+      if (count === 2) {
+        // Second finger down: begin a pinch. Cancel any single-finger pan/marquee/
+        // draft that the first finger may have started so it can't fight the pinch.
+        const m = pinchMetrics()
+        if (m) {
+          pinchRef.current = { startDist: m.dist, lastDist: m.dist, lastMid: m.mid }
+          panningRef.current = false
+          lastPointerRef.current = null
+          marqueeRef.current = null
+          useEditor.getState().setMarquee(null)
+        }
+        return
+      }
+      if (count > 2) {
+        // Extra fingers don't start anything; pinch keeps using the first two.
+        return
+      }
+      // Exactly one touch. In the select tool a one-finger drag pans (instead of
+      // marquee); set up the pan path and skip mouse logic. In draw tools, fall
+      // through so the existing click/tap path places points on tap.
+      const tool = useEditor.getState().tool
+      if (tool === 'select') {
+        pointerDownPosRef.current = pos
+        panningRef.current = true
+        lastPointerRef.current = pos
+        return
+      }
+      // Draw tools: let the shared (mouse) path handle tap-to-place below.
+    }
+
     pointerDownPosRef.current = pos
     const state = useEditor.getState()
     const tool = state.tool
@@ -486,6 +540,32 @@ export function CanvasView() {
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const pos = getCanvasPos(e)
+
+    // ---- Touch gestures (mouse/pen never enter this block) ----
+    if (e.pointerType === 'touch') {
+      // Only update tracked touches; an untracked id (e.g. a hover) is ignored.
+      if (touchesRef.current.has(e.pointerId)) touchesRef.current.set(e.pointerId, pos)
+      const pinch = pinchRef.current
+      if (pinch && touchesRef.current.size >= 2) {
+        const m = pinchMetrics()
+        if (m) {
+          // Zoom about the new midpoint by the frame-to-frame distance ratio, then
+          // translate by the midpoint delta so the gesture also pans. Read camera
+          // fresh to avoid stale closures.
+          let cam = useEditor.getState().camera
+          cam = zoomAt(cam, m.mid, m.dist / pinch.lastDist)
+          cam = panBy(cam, m.mid.x - pinch.lastMid.x, m.mid.y - pinch.lastMid.y)
+          setCamera(cam)
+          pinch.lastDist = m.dist
+          pinch.lastMid = m.mid
+        }
+        return
+      }
+      // Single-finger touch: fall through to the shared logic below. In the select
+      // tool panningRef is set (so the pan-move path runs); in draw tools the draft
+      // rubber-band updates as with the mouse.
+    }
+
     const state = useEditor.getState()
     const tool = state.tool
     const currentCamera = state.camera
@@ -725,6 +805,35 @@ export function CanvasView() {
   }, [])
 
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // ---- Touch gestures (mouse/pen never enter this block) ----
+    if (e.pointerType === 'touch') {
+      const pos = getCanvasPos(e)
+      touchesRef.current.delete(e.pointerId)
+      const remaining = touchesRef.current.size
+      // Any drop below two fingers ends the pinch. We require a fresh two-finger
+      // touch to resume, so the surviving finger does NOT silently take over panning
+      // (which would jump). lastPointer is cleared so no stray pan-move fires.
+      if (remaining < 2 && pinchRef.current) {
+        pinchRef.current = null
+        panningRef.current = false
+        lastPointerRef.current = null
+      }
+      if (remaining === 0) {
+        // Last finger up. If we were one-finger panning the select tool, just tear
+        // the pan state down (no pointer capture was taken for touch). Otherwise let
+        // the draw-tool tap/click path run so a tap still places a point.
+        if (panningRef.current) {
+          clearPointerState()
+          return
+        }
+        // Draw tools: fall through to the shared tap handler below.
+        void pos
+      } else {
+        // Fingers still down (pinch in progress, or transitioning): swallow.
+        return
+      }
+    }
+
     // Middle-button release: just clean up pan state; never fall through to draw paths.
     if (e.button === 1) {
       if (panningRef.current) {
@@ -898,6 +1007,18 @@ export function CanvasView() {
   }
 
   const onPointerCancel = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // ---- Touch gestures (mouse/pen never enter this block) ----
+    if (e.pointerType === 'touch') {
+      touchesRef.current.delete(e.pointerId)
+      const remaining = touchesRef.current.size
+      if (remaining < 2) pinchRef.current = null
+      if (remaining === 0) {
+        // No touch-driven drag/marquee is ever started, so just drop pan/touch state.
+        clearPointerState()
+      }
+      return
+    }
+
     // Don't leave a drag half-fixed: reuse the drag cleanup path.
     const drag = dragRef.current
     if (drag) {
@@ -954,6 +1075,10 @@ export function CanvasView() {
     dragRef.current = null
     dragMovedRef.current = false
     marqueeRef.current = null
+    // Touch gesture state. clearPointerState only runs when no fingers remain (the
+    // touch up/cancel paths gate on remaining === 0), so it's safe to fully reset.
+    pinchRef.current = null
+    touchesRef.current.clear()
   }
 
   return (
