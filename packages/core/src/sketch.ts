@@ -21,6 +21,7 @@ export type Constraint =
   | { id: string; kind: 'parallel'; l1: string; l2: string }
   | { id: string; kind: 'perpendicular'; l1: string; l2: string }
   | { id: string; kind: 'equalLength'; l1: string; l2: string }
+  | { id: string; kind: 'angle'; l1: string; l2: string; vertex: string; value: number }
 
 export interface Sketch {
   points: Record<string, PointEntity>

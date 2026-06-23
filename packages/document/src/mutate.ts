@@ -1,7 +1,8 @@
 import type { PlotDocument } from './document'
 import type { IdGen } from './ids'
 
-type Constraint = PlotDocument['sketch']['constraints'][number]
+type Sketch = PlotDocument['sketch']
+type Constraint = Sketch['constraints'][number]
 
 const round = (n: number): number => Math.round(n)
 
@@ -94,10 +95,81 @@ function refsLine(c: Constraint, lineId: string): boolean {
     case 'parallel':
     case 'perpendicular':
     case 'equalLength':
+    case 'angle':
       return c.l1 === lineId || c.l2 === lineId
     case 'coincident':
       return false
   }
+}
+
+/**
+ * Current signed corner angle (radians, atan2-based) from edge l1 to edge l2 at
+ * the shared vertex, where each edge direction points from the vertex toward the
+ * line's other endpoint. Returns null if either line does not touch the vertex or
+ * a referenced point is missing.
+ */
+export function cornerAngleOf(
+  sketch: Sketch,
+  vertex: string,
+  l1: string,
+  l2: string,
+): number | null {
+  const P = sketch.points[vertex]
+  const a = sketch.lines[l1]
+  const b = sketch.lines[l2]
+  if (!P || !a || !b) return null
+
+  const otherEndpoint = (line: typeof a): string | null => {
+    if (line.a === vertex) return line.b
+    if (line.b === vertex) return line.a
+    return null
+  }
+  const o1Id = otherEndpoint(a)
+  const o2Id = otherEndpoint(b)
+  if (!o1Id || !o2Id) return null
+
+  const o1 = sketch.points[o1Id]
+  const o2 = sketch.points[o2Id]
+  if (!o1 || !o2) return null
+
+  const d1x = o1.x - P.x
+  const d1y = o1.y - P.y
+  const d2x = o2.x - P.x
+  const d2y = o2.y - P.y
+  return Math.atan2(d1x * d2y - d1y * d2x, d1x * d2x + d1y * d2y)
+}
+
+/**
+ * Constrain the corner angle (signed radians) between lines l1 and l2 at the shared
+ * vertex. If an angle constraint already exists for the same unordered pair {l1,l2}
+ * at the same vertex, its value is updated; otherwise a new constraint is appended.
+ * Returns the document unchanged if either line or the vertex is missing.
+ */
+export function setCornerAngle(
+  doc: PlotDocument,
+  gen: IdGen,
+  vertex: string,
+  l1: string,
+  l2: string,
+  valueRad: number,
+): PlotDocument {
+  const s = doc.sketch
+  if (!s.points[vertex] || !s.lines[l1] || !s.lines[l2]) return doc
+
+  const samePair = (c: Constraint): boolean =>
+    c.kind === 'angle' &&
+    c.vertex === vertex &&
+    ((c.l1 === l1 && c.l2 === l2) || (c.l1 === l2 && c.l2 === l1))
+
+  const idx = s.constraints.findIndex(samePair)
+  if (idx >= 0) {
+    const constraints = s.constraints.map((c, i) =>
+      i === idx && c.kind === 'angle' ? { ...c, value: valueRad } : c,
+    )
+    return { ...doc, sketch: { ...s, constraints } }
+  }
+  const c: Constraint = { id: gen('c'), kind: 'angle', l1, l2, vertex, value: valueRad }
+  return { ...doc, sketch: { ...s, constraints: [...s.constraints, c] } }
 }
 
 export function addAxisConstraint(

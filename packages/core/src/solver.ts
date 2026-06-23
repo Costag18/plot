@@ -13,6 +13,7 @@ export type SolveConstraint =
   | { kind: 'parallel'; l1: [string, string]; l2: [string, string] }
   | { kind: 'perpendicular'; l1: [string, string]; l2: [string, string] }
   | { kind: 'equalLength'; l1: [string, string]; l2: [string, string] }
+  | { kind: 'angle'; l1: [string, string]; l2: [string, string]; value: number }
 
 export interface SolveRequest {
   points: SolvePoint[]

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createDocument } from '../src/document'
 import { createIdGen } from '../src/ids'
-import { addLineSegment, addRectangle, movePoint, setPointFixed, deleteEntity, setLineLength, addAxisConstraint, mergePoint } from '../src/mutate'
+import { addLineSegment, addRectangle, movePoint, setPointFixed, deleteEntity, setLineLength, addAxisConstraint, mergePoint, setCornerAngle, cornerAngleOf } from '../src/mutate'
 
 describe('addLineSegment', () => {
   it('adds two points and a line, rounding coordinates', () => {
@@ -130,5 +130,52 @@ describe('mergePoint', () => {
     const doc = addLineSegment(createDocument('m'), createIdGen(), 0, 0, 100, 0)
     expect(mergePoint(doc, 'p0', 'p0')).toBe(doc)
     expect(mergePoint(doc, 'p0', 'ghost')).toBe(doc)
+  })
+})
+
+// Builds a corner at p0=(0,0): line L2 = p0->(100,0) [+x], line L5 = p0->(0,100) [+y].
+function corner() {
+  const gen = createIdGen()
+  let doc = addLineSegment(createDocument('m'), gen, 0, 0, 100, 0) // p0,p1,L2
+  doc = addLineSegment(doc, gen, 0, 0, 0, 100) // p3,p4,L5
+  doc = mergePoint(doc, 'p0', 'p3') // L5 now p0->p4
+  return doc
+}
+
+describe('cornerAngleOf', () => {
+  it('returns the signed angle from edge l1 to edge l2 at the vertex', () => {
+    const doc = corner()
+    const a = cornerAngleOf(doc.sketch, 'p0', 'L2', 'L5')! // +x to +y
+    expect(a).toBeCloseTo(Math.PI / 2, 6)
+    const b = cornerAngleOf(doc.sketch, 'p0', 'L5', 'L2')! // +y to +x (opposite sign)
+    expect(b).toBeCloseTo(-Math.PI / 2, 6)
+  })
+  it('returns null when a line does not touch the vertex or a point is missing', () => {
+    const doc = corner()
+    expect(cornerAngleOf(doc.sketch, 'p1', 'L2', 'L5')).toBeNull() // p1 not on L5
+    expect(cornerAngleOf(doc.sketch, 'ghost', 'L2', 'L5')).toBeNull()
+    expect(cornerAngleOf(doc.sketch, 'p0', 'L2', 'ghost')).toBeNull()
+  })
+})
+
+describe('setCornerAngle', () => {
+  it('appends an angle constraint for a fresh corner pair', () => {
+    const doc = setCornerAngle(corner(), createIdGen(50), 'p0', 'L2', 'L5', Math.PI / 3)
+    const cs = doc.sketch.constraints.filter((c) => c.kind === 'angle')
+    expect(cs).toHaveLength(1)
+    expect(cs[0]).toMatchObject({ kind: 'angle', l1: 'L2', l2: 'L5', vertex: 'p0', value: Math.PI / 3 })
+  })
+  it('updates the value for the same unordered pair instead of duplicating', () => {
+    let doc = setCornerAngle(corner(), createIdGen(50), 'p0', 'L2', 'L5', Math.PI / 3)
+    // swapped order references the same pair {L2,L5} at the same vertex
+    doc = setCornerAngle(doc, createIdGen(60), 'p0', 'L5', 'L2', Math.PI / 4)
+    const cs = doc.sketch.constraints.filter((c) => c.kind === 'angle')
+    expect(cs).toHaveLength(1)
+    expect(cs[0]).toMatchObject({ value: Math.PI / 4 })
+  })
+  it('returns the same doc when a line or the vertex is missing', () => {
+    const doc = corner()
+    expect(setCornerAngle(doc, createIdGen(), 'p0', 'L2', 'ghost', 1)).toBe(doc)
+    expect(setCornerAngle(doc, createIdGen(), 'ghost', 'L2', 'L5', 1)).toBe(doc)
   })
 })

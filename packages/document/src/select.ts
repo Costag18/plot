@@ -112,5 +112,13 @@ function cloneConstraint(
       const l2 = lineMap.get(c.l2)
       return l1 && l2 ? { id: gen('c'), kind: c.kind, l1, l2 } : null
     }
+    case 'angle': {
+      const l1 = lineMap.get(c.l1)
+      const l2 = lineMap.get(c.l2)
+      const vertex = pointMap.get(c.vertex)
+      return l1 && l2 && vertex
+        ? { id: gen('c'), kind: 'angle', l1, l2, vertex, value: c.value }
+        : null
+    }
   }
 }

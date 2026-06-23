@@ -50,6 +50,18 @@ export function buildSolveRequest(sketch: Sketch): SolveRequest {
         if (a && b) constraints.push({ kind: 'equalLength', l1: endpoints(a), l2: endpoints(b) })
         break
       }
+      case 'angle': {
+        const a = sketch.lines[c.l1]
+        const b = sketch.lines[c.l2]
+        if (a && b) {
+          // Orient each edge to START at the shared vertex so the line-to-line
+          // angle the solver enforces is the corner angle between the two edges.
+          const l1: [string, string] = a.a === c.vertex ? [a.a, a.b] : [a.b, a.a]
+          const l2: [string, string] = b.a === c.vertex ? [b.a, b.b] : [b.b, b.a]
+          constraints.push({ kind: 'angle', l1, l2, value: c.value })
+        }
+        break
+      }
     }
   }
 

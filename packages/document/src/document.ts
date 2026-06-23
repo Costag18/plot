@@ -30,6 +30,14 @@ const ConstraintSchema = z.discriminatedUnion('kind', [
   z.object({ id: z.string(), kind: z.literal('parallel'), l1: z.string(), l2: z.string() }),
   z.object({ id: z.string(), kind: z.literal('perpendicular'), l1: z.string(), l2: z.string() }),
   z.object({ id: z.string(), kind: z.literal('equalLength'), l1: z.string(), l2: z.string() }),
+  z.object({
+    id: z.string(),
+    kind: z.literal('angle'),
+    l1: z.string(),
+    l2: z.string(),
+    vertex: z.string(),
+    value: z.number(),
+  }),
 ])
 
 const SketchSchema = z.object({
