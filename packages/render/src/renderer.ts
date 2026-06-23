@@ -34,6 +34,7 @@ export interface RenderState {
   draft?: Draft | null
   snap?: SnapHint | null
   image?: RenderImage | null
+  marquee?: { a: Vec2; b: Vec2 } | null
 }
 
 const COLORS = {
@@ -228,6 +229,23 @@ export class CanvasRenderer {
         else line(ctx, at.x, 0, at.x, this.h)
         ctx.restore()
       }
+    }
+
+    if (s.marquee) {
+      const a = worldToScreen(c, s.marquee.a)
+      const b = worldToScreen(c, s.marquee.b)
+      ctx.save()
+      ctx.setLineDash([4, 3])
+      ctx.strokeStyle = COLORS.selected
+      ctx.fillStyle = 'rgba(245,158,11,0.08)'
+      ctx.lineWidth = 1
+      const x = Math.min(a.x, b.x)
+      const y = Math.min(a.y, b.y)
+      const w = Math.abs(b.x - a.x)
+      const h = Math.abs(b.y - a.y)
+      ctx.fillRect(x, y, w, h)
+      ctx.strokeRect(x, y, w, h)
+      ctx.restore()
     }
   }
 }
