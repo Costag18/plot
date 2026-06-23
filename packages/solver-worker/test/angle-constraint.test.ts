@@ -7,6 +7,7 @@ import {
   mergePoint,
   setPointFixed,
   setCornerAngle,
+  addPointLineDistance,
 } from '@plot/document'
 import { buildSolveRequest } from '@plot/core'
 
@@ -60,5 +61,40 @@ describe('PlaneGcsSolver angle constraint', () => {
     const deg = (Math.abs(angle) * 180) / Math.PI
 
     expect(Math.abs(deg - 90)).toBeLessThan(0.5)
+  }, 20_000)
+})
+
+describe('PlaneGcsSolver pointLineDistance constraint', () => {
+  it('pulls a free point to a perpendicular distance of 2 m from a fixed horizontal line', async () => {
+    const gen = createIdGen(0)
+    let doc = createDocument('m')
+
+    // Line A: (0,0) -> (4M, 0). Both endpoints fixed, so the line stays put.
+    doc = addLineSegment(doc, gen, 0, 0, 4 * M, 0) // p0, p1=A_far, L2=lineA
+    // Throwaway second line; its first endpoint is the free point P=(1M, 1M).
+    doc = addLineSegment(doc, gen, 1 * M, 1 * M, 2 * M, 2 * M) // p3=P, p4, L5
+
+    const aNear = 'p0'
+    const aFar = 'p1'
+    const lineA = 'L2'
+    const P = 'p3'
+
+    doc = setPointFixed(doc, aNear, true)
+    doc = setPointFixed(doc, aFar, true)
+
+    // Perpendicular distance from P to line A constrained to 2 m.
+    doc = addPointLineDistance(doc, gen, P, lineA, 2 * M)
+
+    const req = buildSolveRequest(doc.sketch)
+    const solver = new PlaneGcsSolver()
+    const result = await solver.solve(req)
+
+    expect(result.status).toBe('ok')
+
+    const byId = Object.fromEntries(result.points.map((p) => [p.id, p]))
+    const p = byId[P]!
+
+    // Line A is horizontal along y=0, so the perpendicular distance is |P.y|.
+    expect(Math.abs(Math.abs(p.y) - 2 * M)).toBeLessThan(2000)
   }, 20_000)
 })

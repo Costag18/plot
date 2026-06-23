@@ -14,6 +14,7 @@ export type SolveConstraint =
   | { kind: 'perpendicular'; l1: [string, string]; l2: [string, string] }
   | { kind: 'equalLength'; l1: [string, string]; l2: [string, string] }
   | { kind: 'angle'; l1: [string, string]; l2: [string, string]; value: number }
+  | { kind: 'pointLineDistance'; point: string; l: [string, string]; value: number }
 
 export interface SolveRequest {
   points: SolvePoint[]

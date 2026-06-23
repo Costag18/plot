@@ -62,6 +62,18 @@ export function buildSolveRequest(sketch: Sketch): SolveRequest {
         }
         break
       }
+      case 'pointLineDistance': {
+        const line = sketch.lines[c.line]
+        if (line) {
+          constraints.push({
+            kind: 'pointLineDistance',
+            point: c.point,
+            l: [line.a, line.b],
+            value: c.value,
+          })
+        }
+        break
+      }
     }
   }
 

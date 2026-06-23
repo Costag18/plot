@@ -89,6 +89,11 @@ function pushConstraint(
       out.push({ id: consId(), type: 'l2l_angle_ll', l1_id, l2_id, angle: c.value })
       break
     }
+    case 'pointLineDistance': {
+      const l_id = lineFor(c.l)
+      out.push({ id: consId(), type: 'p2l_distance', p_id: c.point, l_id, distance: c.value })
+      break
+    }
   }
 }
 
