@@ -92,18 +92,21 @@ export class PlaneGcsSolver implements ISolver {
     const gcs = new GcsWrapper(new mod.GcsSystem())
     try {
       gcs.push_primitives_and_params(toPrimitives(request))
-      const status = gcs.solve()
-      if (status !== SOLVE_SUCCESS && status !== SOLVE_CONVERGED) {
-        return { status: 'failed', points: [] }
-      }
+      const code = gcs.solve()
       gcs.apply_solution()
 
       const points = gcs.sketch_index
         .get_primitives()
         .filter((p): p is SketchPoint => p.type === 'point')
-        .map((p) => ({ id: p.id, x: p.x, y: p.y }))
+        .map((p) => ({ id: p.id, x: Number(p.x), y: Number(p.y) }))
 
-      return { status: 'ok', points }
+      const converged = code === SOLVE_SUCCESS || code === SOLVE_CONVERGED
+      const finite = points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
+
+      if (!finite) {
+        return { status: 'failed', points: [] }
+      }
+      return { status: converged ? 'ok' : 'failed', points }
     } catch (e) {
       console.error('[PlaneGcsSolver] unexpected error during solve:', e)
       return { status: 'failed', points: [] }
