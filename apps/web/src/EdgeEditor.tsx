@@ -38,9 +38,8 @@ export function EdgeEditor() {
   return (
     <input
       ref={inputRef}
-      type="number"
-      min={0}
-      step="any"
+      type="text"
+      inputMode="decimal"
       defaultValue={defaultDisplay}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {

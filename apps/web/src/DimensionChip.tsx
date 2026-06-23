@@ -47,9 +47,8 @@ export function DimensionChip() {
       <span style={{ opacity: 0.8 }}>{formatLength(liveUm, units)}</span>
       <input
         ref={inputRef}
-        type="number"
-        min={0}
-        step="any"
+        type="text"
+        inputMode="decimal"
         placeholder={`length (${units})`}
         onChange={(e) => {
           const v = e.target.value

@@ -1,4 +1,4 @@
-import { createIdGen } from '@plot/document'
+import { createIdGen, parseLengthInput } from '@plot/document'
 import type { Unit } from '@plot/document'
 
 // Single id generator shared between the store and CanvasView so that ids stay
@@ -15,11 +15,11 @@ const UM_PER_UNIT: Record<Unit, number> = {
 }
 
 // Convert a length expressed in the document's display unit to micrometers.
-// Returns null when the value is not a finite, positive number.
+// Delegates to parseLengthInput which supports bare numbers, metric suffixes,
+// and feet-inches notation (12' 6", 18", 2ft, etc.).
 export function parseLength(value: string | number, unit: Unit): number | null {
-  const n = typeof value === 'number' ? value : Number(value)
-  if (!Number.isFinite(n) || n <= 0) return null
-  return Math.round(n * UM_PER_UNIT[unit])
+  const text = typeof value === 'number' ? String(value) : value
+  return parseLengthInput(text, unit)
 }
 
 // Convert micrometers back to a display-unit number (for prefilling inputs).

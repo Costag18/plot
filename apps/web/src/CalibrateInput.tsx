@@ -59,9 +59,8 @@ export function CalibrateInput() {
       <span style={{ opacity: 0.8 }}>length</span>
       <input
         ref={inputRef}
-        type="number"
-        min={0}
-        step="any"
+        type="text"
+        inputMode="decimal"
         placeholder={`length (${units})`}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
