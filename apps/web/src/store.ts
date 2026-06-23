@@ -16,6 +16,12 @@ import {
   duplicateEntities,
   setCornerAngle,
   cornerAngleOf,
+  addParallel,
+  addPerpendicular,
+  addEqualLength,
+  addCoincident,
+  addAxisConstraint,
+  addPointLineDistance,
 } from '@plot/document'
 import type { History, PlotDocument, RefImage } from '@plot/document'
 import type { Unit } from '@plot/document'
@@ -118,6 +124,12 @@ interface EditorState {
   solvePreview: (next: PlotDocument) => Promise<void>
   setLineLengthAndSolve: (lineId: string, valueUm: number) => Promise<void>
   setCornerAngleAndSolve: (vertex: string, l1: string, l2: string, valueRad: number) => Promise<void>
+  applyParallel: () => Promise<void>
+  applyPerpendicular: () => Promise<void>
+  applyEqual: () => Promise<void>
+  applyCoincident: () => Promise<void>
+  applyAxis: (axis: 'horizontal' | 'vertical') => Promise<void>
+  applyPointLineDistance: (valueUm: number) => Promise<void>
   deleteSelection: () => void
   undo: () => void
   redo: () => void
@@ -281,6 +293,112 @@ export const useEditor = create<EditorState>((set, get) => ({
       set((s) => ({ history: commit(s.history, { ...next, sketch: solvedSketch }), preview: null }))
     } else {
       set({ preview: null, toast: 'That angle conflicts — reverted.' })
+    }
+  },
+  applyParallel: async () => {
+    const s = get()
+    const present = s.history.present
+    const lines = [...s.selection].filter((id) => !!present.sketch.lines[id])
+    if (lines.length !== 2) return
+    const [l1, l2] = lines as [string, string]
+    const token = ++solveSeq
+    const next = addParallel(present, idGen, l1, l2)
+    const res = await getSolver().solve(buildSolveRequest(next.sketch))
+    if (token !== solveSeq) return
+    if (res.status !== 'ok') { set({ preview: null, toast: "Those lines can't be made parallel — reverted." }); return }
+    const solved = applySolvedPoints(next.sketch, res.points)
+    set((st) => ({ history: commit(st.history, { ...next, sketch: solved }), preview: null }))
+  },
+  applyPerpendicular: async () => {
+    const s = get()
+    const present = s.history.present
+    const lines = [...s.selection].filter((id) => !!present.sketch.lines[id])
+    if (lines.length !== 2) return
+    const [l1, l2] = lines as [string, string]
+    const token = ++solveSeq
+    const next = addPerpendicular(present, idGen, l1, l2)
+    const res = await getSolver().solve(buildSolveRequest(next.sketch))
+    if (token !== solveSeq) return
+    if (res.status !== 'ok') { set({ preview: null, toast: "Those lines can't be made perpendicular — reverted." }); return }
+    const solved = applySolvedPoints(next.sketch, res.points)
+    set((st) => ({ history: commit(st.history, { ...next, sketch: solved }), preview: null }))
+  },
+  applyEqual: async () => {
+    const s = get()
+    const present = s.history.present
+    const lines = [...s.selection].filter((id) => !!present.sketch.lines[id])
+    if (lines.length !== 2) return
+    const [l1, l2] = lines as [string, string]
+    const token = ++solveSeq
+    const next = addEqualLength(present, idGen, l1, l2)
+    const res = await getSolver().solve(buildSolveRequest(next.sketch))
+    if (token !== solveSeq) return
+    if (res.status !== 'ok') { set({ preview: null, toast: "Those lines can't be made equal length — reverted." }); return }
+    const solved = applySolvedPoints(next.sketch, res.points)
+    set((st) => ({ history: commit(st.history, { ...next, sketch: solved }), preview: null }))
+  },
+  applyCoincident: async () => {
+    const s = get()
+    const present = s.history.present
+    const points = [...s.selection].filter((id) => !!present.sketch.points[id])
+    if (points.length !== 2) return
+    const [p1, p2] = points as [string, string]
+    const token = ++solveSeq
+    const next = addCoincident(present, idGen, p1, p2)
+    const res = await getSolver().solve(buildSolveRequest(next.sketch))
+    if (token !== solveSeq) return
+    if (res.status !== 'ok') { set({ preview: null, toast: "Those points can't be made coincident — reverted." }); return }
+    const solved = applySolvedPoints(next.sketch, res.points)
+    set((st) => ({ history: commit(st.history, { ...next, sketch: solved }), preview: null }))
+  },
+  applyAxis: async (axis) => {
+    const s = get()
+    const present = s.history.present
+    const lines = [...s.selection].filter((id) => !!present.sketch.lines[id])
+    if (lines.length !== 1) return
+    const lineId = lines[0] as string
+    const token = ++solveSeq
+    const next = addAxisConstraint(present, idGen, lineId, axis)
+    const res = await getSolver().solve(buildSolveRequest(next.sketch))
+    if (token !== solveSeq) return
+    if (res.status !== 'ok') { set({ preview: null, toast: `That line can't be made ${axis} — reverted.` }); return }
+    const solved = applySolvedPoints(next.sketch, res.points)
+    set((st) => ({ history: commit(st.history, { ...next, sketch: solved }), preview: null }))
+  },
+  applyPointLineDistance: async (valueUm) => {
+    const s = get()
+    const present = s.history.present
+    const selectedIds = [...s.selection]
+    const pointIds = selectedIds.filter((id) => !!present.sketch.points[id])
+    const lineIds = selectedIds.filter((id) => !!present.sketch.lines[id])
+    if (pointIds.length !== 1 || lineIds.length !== 1) return
+    const pointId = pointIds[0] as string
+    const lineId = lineIds[0] as string
+    const token = ++solveSeq
+    const next = addPointLineDistance(present, idGen, pointId, lineId, valueUm)
+    const res = await getSolver().solve(buildSolveRequest(next.sketch))
+    if (token !== solveSeq) return
+    const solvedSketch = applySolvedPoints(next.sketch, res.points)
+    // Measure achieved perpendicular distance: |cross(b-a, P-a)| / |b-a|
+    const line = solvedSketch.lines[lineId]
+    const P = solvedSketch.points[pointId]
+    const pa = line ? solvedSketch.points[line.a] : undefined
+    const pb = line ? solvedSketch.points[line.b] : undefined
+    let achieved = NaN
+    if (P && pa && pb) {
+      const ax = pb.x - pa.x
+      const ay = pb.y - pa.y
+      const bx = P.x - pa.x
+      const by = P.y - pa.y
+      const cross = Math.abs(ax * by - ay * bx)
+      const len = Math.sqrt(ax * ax + ay * ay)
+      if (len > 0) achieved = cross / len
+    }
+    const tol = Math.max(2000, valueUm * 0.002)
+    if (Number.isFinite(achieved) && Math.abs(achieved - valueUm) <= tol) {
+      set((st) => ({ history: commit(st.history, { ...next, sketch: solvedSketch }), preview: null }))
+    } else {
+      set({ preview: null, toast: 'That distance conflicts — reverted.' })
     }
   },
   deleteSelection: () => {

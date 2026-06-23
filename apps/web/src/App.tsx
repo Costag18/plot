@@ -6,6 +6,7 @@ import { CanvasView } from './CanvasView'
 import { EmptyState } from './EmptyState'
 import { StatusBar } from './StatusBar'
 import { Toast } from './Toast'
+import { ConstraintPalette } from './ConstraintPalette'
 import { UNITS } from '@plot/document'
 import type { RefImage } from '@plot/document'
 import { toSVG } from '@plot/render'
@@ -207,6 +208,7 @@ export function App() {
       <div style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
         <CanvasView />
         <EmptyState />
+        <ConstraintPalette />
         <Toast />
       </div>
       <StatusBar />
