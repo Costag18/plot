@@ -158,6 +158,34 @@ export function mergePoint(doc: PlotDocument, keepId: string, dropId: string): P
   return { ...doc, sketch: { points, lines, constraints } }
 }
 
+export function addPolygon(
+  doc: PlotDocument,
+  gen: IdGen,
+  pts: ReadonlyArray<{ x: number; y: number }>,
+  closed: boolean,
+): { doc: PlotDocument; newIds: string[] } {
+  if (pts.length < 2) return { doc, newIds: [] }
+  const newIds: string[] = []
+  const points = { ...doc.sketch.points }
+  const ids: string[] = []
+  for (const p of pts) {
+    const id = gen('p')
+    points[id] = { type: 'point', id, x: round(p.x), y: round(p.y), fixed: false }
+    ids.push(id)
+    newIds.push(id)
+  }
+  const lines = { ...doc.sketch.lines }
+  const edgeCount = closed ? pts.length : pts.length - 1
+  for (let i = 0; i < edgeCount; i++) {
+    const a = ids[i]!
+    const b = ids[(i + 1) % ids.length]!
+    const id = gen('L')
+    lines[id] = { type: 'line', id, a, b }
+    newIds.push(id)
+  }
+  return { doc: { ...doc, sketch: { ...doc.sketch, points, lines } }, newIds }
+}
+
 export function deleteEntity(doc: PlotDocument, id: string): PlotDocument {
   const s = doc.sketch
 
