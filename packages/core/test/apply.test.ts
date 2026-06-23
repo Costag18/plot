@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { applySolveResult, solveSketch } from '../src/apply'
+import { applySolveResult, applySolvedPoints, solveSketch } from '../src/apply'
 import { emptySketch } from '../src/sketch'
 import type { Sketch } from '../src/sketch'
 import type { ISolver, SolveResult } from '../src/solver'
@@ -11,6 +11,28 @@ const sketch = (): Sketch => ({
   },
   lines: {},
   constraints: [],
+})
+
+describe('applySolvedPoints', () => {
+  it('applies rounded coords to matching points', () => {
+    const next = applySolvedPoints(sketch(), [{ id: 'p1', x: 2_999_999.6, y: 0.4 }])
+    expect(next.points.p1).toEqual({ type: 'point', id: 'p1', x: 3_000_000, y: 0, fixed: false })
+  })
+
+  it('ignores unknown ids and leaves other points untouched', () => {
+    const s = sketch()
+    const next = applySolvedPoints(s, [{ id: 'ghost', x: 5, y: 5 }])
+    expect(next.points.ghost).toBeUndefined()
+    expect(next.points.p0).toEqual(s.points.p0)
+    expect(next.points.p1).toEqual(s.points.p1)
+  })
+
+  it('leaves points not in the solved list untouched', () => {
+    const s = sketch()
+    const next = applySolvedPoints(s, [{ id: 'p1', x: 1_000_000, y: 2_000_000 }])
+    expect(next.points.p0).toEqual(s.points.p0)
+    expect(next.points.p1?.x).toBe(1_000_000)
+  })
 })
 
 describe('applySolveResult', () => {

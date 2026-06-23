@@ -18,7 +18,7 @@ import {
 import type { History, PlotDocument, RefImage } from '@plot/document'
 import type { Unit } from '@plot/document'
 import type { Camera, Hit, Draft, SnapHint } from '@plot/render'
-import { buildSolveRequest, applySolveResult } from '@plot/core'
+import { buildSolveRequest, applySolveResult, applySolvedPoints, distance } from '@plot/core'
 import type { Vec2 } from '@plot/core'
 import { seedDocument } from './seed'
 import { getSolver } from './solver'
@@ -225,15 +225,24 @@ export const useEditor = create<EditorState>((set, get) => ({
     const token = ++solveSeq
     const present = get().history.present
     const next = setLineLength(present, idGen, lineId, valueUm)
-    const { status, doc } = await solveDocStatus(next)
+    const res = await getSolver().solve(buildSolveRequest(next.sketch))
     // A newer operation started while we were solving: drop this stale result.
     if (token !== solveSeq) return
-    if (status !== 'ok') {
-      // Over-constrained / conflicting: leave history.present as-is, drop preview.
+    // Apply best-effort solved points regardless of solver status, then measure
+    // the achieved length to decide whether the constraint was actually satisfiable.
+    const solvedSketch = applySolvedPoints(next.sketch, res.points)
+    const line = solvedSketch.lines[lineId]
+    const pa = line ? solvedSketch.points[line.a] : undefined
+    const pb = line ? solvedSketch.points[line.b] : undefined
+    const achieved = pa && pb ? distance(pa, pb) : NaN
+    // Tolerance: 0.2% of requested length, minimum 2 mm (2000 µm).
+    const tol = Math.max(2000, valueUm * 0.002)
+    if (Number.isFinite(achieved) && Math.abs(achieved - valueUm) <= tol) {
+      set((s) => ({ history: commit(s.history, { ...next, sketch: solvedSketch }), preview: null }))
+    } else {
+      // Geometry did not reach the requested length — truly over-constrained or diverged.
       set({ preview: null, toast: 'That dimension conflicts — reverted.' })
-      return
     }
-    set((s) => ({ history: commit(s.history, doc), preview: null }))
   },
   deleteSelection: () => {
     ++solveSeq
