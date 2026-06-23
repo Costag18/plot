@@ -84,6 +84,23 @@ export function duplicateEntities(
   return { doc: { ...doc, sketch: { points, lines, constraints } }, newIds }
 }
 
+export function connectedPointIds(sketch: Sketch, seedLineId: string): Set<string> {
+  const seed = sketch.lines[seedLineId]
+  const out = new Set<string>()
+  if (!seed) return out
+  const queue: string[] = [seed.a, seed.b]
+  while (queue.length > 0) {
+    const pid = queue.pop()!
+    if (out.has(pid)) continue
+    out.add(pid)
+    for (const l of Object.values(sketch.lines)) {
+      if (l.a === pid && !out.has(l.b)) queue.push(l.b)
+      if (l.b === pid && !out.has(l.a)) queue.push(l.a)
+    }
+  }
+  return out
+}
+
 function cloneConstraint(
   c: Constraint,
   pointMap: Map<string, string>,
