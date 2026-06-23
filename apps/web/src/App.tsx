@@ -29,6 +29,8 @@ export function App() {
   const canR = useEditor((s) => s.canRedo())
   const fitFn = useEditor((s) => s.fit)
   const deleteFn = useEditor((s) => s.deleteSelection)
+  const gridSnap = useEditor((s) => s.gridSnap)
+  const toggleGridSnap = useEditor((s) => s.toggleGridSnap)
   // Subscribe to history.present so units display updates on undo/redo/open
   const docUnits = useEditor((s) => s.history.present.units)
   const setUnits = useEditor((s) => s.setUnits)
@@ -123,6 +125,19 @@ export function App() {
         <button onClick={redoFn} disabled={!canR}>Redo</button>
         <button onClick={fitFn}>Fit</button>
         <button onClick={deleteFn} disabled={selection.size === 0}>Delete</button>
+        <button
+          onClick={toggleGridSnap}
+          aria-pressed={gridSnap}
+          title="Snap draw and drag to a grid"
+          style={{
+            fontWeight: gridSnap ? 700 : 400,
+            border: gridSnap ? '2px solid #1d4ed8' : '1px solid #ccc',
+            borderRadius: 4,
+            padding: '2px 8px',
+          }}
+        >
+          Grid
+        </button>
         <span style={{ width: 1, alignSelf: 'stretch', background: '#ddd' }} />
         <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4 }}>
           Units:

@@ -62,6 +62,10 @@ interface EditorState {
   snap: SnapHint | null
   // Marquee selection box in world coords (drag-to-select). Null when not active.
   marquee: { a: Vec2; b: Vec2 } | null
+  // Grid snapping. When `gridSnap` is on, draw clicks and drags snap world points
+  // to the nearest `gridStep` (micrometers) lattice. Off by default.
+  gridSnap: boolean
+  gridStep: number
   // Last pointer position in world coords (for the status bar). Null until first move.
   cursor: Vec2 | null
   // Copied entity ids, captured on copy; pasted by re-duplicating from the present.
@@ -86,6 +90,8 @@ interface EditorState {
   setSelection: (ids: string[]) => void
   toggleSelect: (id: string) => void
   setMarquee: (m: { a: Vec2; b: Vec2 } | null) => void
+  toggleGridSnap: () => void
+  setGridStep: (n: number) => void
   setCursor: (c: Vec2 | null) => void
   selectAll: () => void
   duplicateSelection: (dx?: number, dy?: number) => void
@@ -146,6 +152,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   toast: null,
   snap: null,
   marquee: null,
+  gridSnap: false,
+  gridStep: 100_000,
   cursor: null,
   clipboard: null,
   typedLength: null,
@@ -170,6 +178,8 @@ export const useEditor = create<EditorState>((set, get) => ({
       return { selection: next }
     }),
   setMarquee: (marquee) => set({ marquee }),
+  toggleGridSnap: () => set((s) => ({ gridSnap: !s.gridSnap })),
+  setGridStep: (gridStep) => set({ gridStep }),
   setCursor: (cursor) => set({ cursor }),
   selectAll: () => set((s) => ({ selection: new Set(allSelectableIds(s.history.present.sketch)) })),
   duplicateSelection: (dx = 200000, dy = 200000) => {

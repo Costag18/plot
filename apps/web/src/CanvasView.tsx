@@ -24,9 +24,11 @@ import {
   inferAxis,
   snapPoint,
   affectedPointIds,
+  connectedPointIds,
   translateEntities,
 } from '@plot/document'
 import type { PlotDocument } from '@plot/document'
+import { snapToGrid } from '@plot/core'
 import type { Vec2 } from '@plot/core'
 import { idGen } from './ids'
 import { DimensionChip } from './DimensionChip'
@@ -231,16 +233,18 @@ export function CanvasView() {
   // `lastMid` the pair midpoint (all canvas-local). Null when not pinching. While
   // non-null, single-finger pan/marquee/draw are suppressed for touch.
   const pinchRef = useRef<{ startDist: number; lastDist: number; lastMid: { x: number; y: number } } | null>(null)
-  // Move-drag state (select tool): drag the whole current selection. `base` is
-  // `history.present` with every affected point fixed, so translating those points
-  // and solving moves the rest of the sketch around the dragged set. `origFixed`
-  // records each affected point's original fixed flag (restored on commit). `last`
+  // Move-drag state (select tool). `moveSet` is the set of POINT ids that move,
+  // chosen at drag start by what was grabbed (see onPointerDown): a plain edge grab
+  // moves the whole connected component (rigid move, never deforms); a vertex grab
+  // or multi-selection moves the affected points (reshape). `base` is
+  // `history.present` with every moveSet point fixed, so translating those points
+  // and solving keeps them put while the rest of the sketch follows. `origFixed`
+  // records each moveSet point's original fixed flag (restored on commit). `last`
   // is the most recent unsolved doc so finishDrag solves from the final cursor
   // position even if a preview solve is still in flight. `startWorld` is the world
   // position at pointerdown; the world delta is applied to `base` each move.
   const dragRef = useRef<{
-    ids: string[]
-    affected: string[]
+    moveSet: string[]
     base: PlotDocument
     origFixed: Map<string, boolean>
     startWorld: Vec2
@@ -263,6 +267,15 @@ export function CanvasView() {
   const getCanvasPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
     return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  }
+
+  // Grid snapping. When `gridSnap` is on, round a world point to the nearest
+  // `gridStep` lattice; otherwise pass it through unchanged. Read fresh from the
+  // store so toggling takes effect mid-gesture without restarting it. Named
+  // `snapW` (snap world) to avoid clashing with the `snap` SnapHint state above.
+  const snapW = (w: Vec2): Vec2 => {
+    const s = useEditor.getState()
+    return s.gridSnap ? snapToGrid(w, s.gridStep) : w
   }
 
   // Distance + midpoint of the two active touch pointers (canvas-local). Returns
@@ -509,19 +522,26 @@ export function CanvasView() {
         } else if (!state.selection.has(hit.id)) {
           state.setSelection([hit.id])
         }
-        // Read the (now-updated) selection and begin a move-drag. Fix every point
-        // implied by the selection so translating them moves the rest via solve.
+        // Read the (now-updated) selection and begin a move-drag. Choose the set of
+        // points to move by WHAT was grabbed:
+        //  - plain edge grab (the hit is a line AND it's the sole selection) → move
+        //    the whole connected component, so a rigid translate preserves every
+        //    constraint and the shape moves without deforming;
+        //  - vertex grab, or any multi-selection → move the affected points (reshape).
         const sel = [...useEditor.getState().selection]
         if (sel.length > 0) {
-          const affected = [...affectedPointIds(present.sketch, sel)]
+          const plainEdgeGrab = hit.kind === 'line' && sel.length === 1 && sel[0] === hit.id
+          const moveSet = plainEdgeGrab
+            ? [...connectedPointIds(present.sketch, hit.id)]
+            : [...affectedPointIds(present.sketch, sel)]
           const origFixed = new Map<string, boolean>()
           let base = present
-          for (const pid of affected) {
+          for (const pid of moveSet) {
             const p = present.sketch.points[pid]
             origFixed.set(pid, p ? p.fixed : false)
             base = setPointFixed(base, pid, true)
           }
-          dragRef.current = { ids: sel, affected, base, origFixed, startWorld: world, last: base }
+          dragRef.current = { moveSet, base, origFixed, startWorld: world, last: base }
           dragMovedRef.current = false
         }
         panningRef.current = false
@@ -574,17 +594,24 @@ export function CanvasView() {
     // Status-bar cursor coordinates track every move.
     state.setCursor(world)
 
-    // Move-dragging the whole selection (select tool)
+    // Move-dragging the selection (select tool)
     const drag = dragRef.current
     if (drag) {
       const downPos = pointerDownPosRef.current
       if (downPos && Math.hypot(pos.x - downPos.x, pos.y - downPos.y) >= 4) {
         dragMovedRef.current = true
       }
-      const dx = world.x - drag.startWorld.x
-      const dy = world.y - drag.startWorld.y
-      // Translate every affected point on the fixed base, then solve.
-      const moved = translateEntities(drag.base, drag.ids, dx, dy)
+      // Snap both endpoints of the delta so the moved geometry lands on the grid:
+      // delta = snap(cursor) - snap(dragStart). Snapping each end (rather than the
+      // raw delta) keeps the shape grid-aligned when it started aligned, while a
+      // pass-through snap (gridSnap off) leaves the delta exactly equal to the
+      // cursor motion.
+      const start = snapW(drag.startWorld)
+      const cur = snapW(world)
+      const dx = cur.x - start.x
+      const dy = cur.y - start.y
+      // Translate the moveSet points on the fixed base, then solve.
+      const moved = translateEntities(drag.base, drag.moveSet, dx, dy)
       drag.last = moved
       // Fire-and-forget; latest-wins inside the store drops stale solves.
       void state.solvePreview(moved)
@@ -610,9 +637,11 @@ export function CanvasView() {
     // Update an in-progress draft (line/rect tools)
     const draftNow = state.draft
     if (tool === 'line' && draftNow && draftNow.kind === 'line') {
-      // Axis inference + endpoint snap while drawing a line.
+      // Grid-snap the cursor first (no-op when gridSnap is off), then do axis
+      // inference + endpoint snap while drawing a line.
       const a = draftNow.a
-      let b = { x: world.x, y: world.y }
+      const gw = snapW(world)
+      let b = { x: gw.x, y: gw.y }
       const axis = inferAxis(a.x, a.y, b.x, b.y)
       if (axis === 'horizontal') {
         b = { x: b.x, y: a.y }
@@ -635,18 +664,23 @@ export function CanvasView() {
       return
     }
     if (tool === 'rect' && draftNow && draftNow.kind === 'rect') {
-      state.setDraft({ ...draftNow, b: { x: world.x, y: world.y } })
+      // Grid-snap the rubber-band corner so the live preview matches the placed
+      // rect (no-op when gridSnap is off).
+      const gw = snapW(world)
+      state.setDraft({ ...draftNow, b: { x: gw.x, y: gw.y } })
       return
     }
-    // Calibrate: live-preview the reference segment (no snap/inference).
+    // Calibrate: live-preview the reference segment (no snap/inference — calibrate
+    // measures a real-world feature, so grid snapping must not perturb it).
     if (tool === 'calibrate' && draftNow && draftNow.kind === 'line') {
       state.setDraft({ ...draftNow, b: { x: world.x, y: world.y } })
       return
     }
     // Polygon: rubber-band the last segment to the cursor (only once a vertex
-    // has been placed).
+    // has been placed). Grid-snap so the preview matches the placed vertex.
     if (tool === 'polygon' && polygonRef.current.length > 0) {
-      state.setDraft({ kind: 'polygon', pts: [...polygonRef.current, { x: world.x, y: world.y }] })
+      const gw = snapW(world)
+      state.setDraft({ kind: 'polygon', pts: [...polygonRef.current, { x: gw.x, y: gw.y }] })
       return
     }
 
@@ -930,7 +964,9 @@ export function CanvasView() {
         clearPointerState()
         return
       }
-      const world = screenToWorld(state.camera, pos)
+      // Snap the placed vertex to the grid (no-op when gridSnap is off). The close
+      // test below stays in screen space against the already-placed first vertex.
+      const world = snapW(screenToWorld(state.camera, pos))
       const pts = polygonRef.current
       if (pts.length >= 3) {
         const first = pts[0]!
@@ -954,11 +990,12 @@ export function CanvasView() {
         clearPointerState()
         return
       }
-      const world = screenToWorld(state.camera, pos)
+      // Snap the click to the grid first (no-op when gridSnap is off).
+      const world = snapW(screenToWorld(state.camera, pos))
       const draftNow = state.draft
       if (!draftNow) {
         // First click: start the draft. For a line, snap the start onto an
-        // existing point if one is nearby.
+        // existing point if one is nearby (existing-point snap overrides grid).
         let a = { x: world.x, y: world.y }
         if (tool === 'line') {
           const snapId = snapPoint(state.history.present.sketch, world, SNAP_TOL_PX / state.camera.scale)
@@ -1063,14 +1100,14 @@ export function CanvasView() {
     }
   }
 
-  // Commit a move-drag: restore each affected point's ORIGINAL fixed flag (captured
+  // Commit a move-drag: restore each moveSet point's ORIGINAL fixed flag (captured
   // at drag start), then solve+commit. Solve from `drag.last` (points at the final
   // cursor) so the committed result matches the cursor even if a preview solve is
   // still in flight.
   function finishDrag(drag: NonNullable<typeof dragRef.current>) {
     const state = useEditor.getState()
     let restored = drag.last
-    for (const pid of drag.affected) {
+    for (const pid of drag.moveSet) {
       restored = setPointFixed(restored, pid, drag.origFixed.get(pid) ?? false)
     }
     void state.solveAndCommit(restored)
