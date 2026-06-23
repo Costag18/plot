@@ -38,6 +38,13 @@ const ConstraintSchema = z.discriminatedUnion('kind', [
     vertex: z.string(),
     value: z.number(),
   }),
+  z.object({
+    id: z.string(),
+    kind: z.literal('pointLineDistance'),
+    point: z.string(),
+    line: z.string(),
+    value: z.number(),
+  }),
 ])
 
 const SketchSchema = z.object({

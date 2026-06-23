@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createDocument } from '../src/document'
 import { createIdGen } from '../src/ids'
-import { addLineSegment, addRectangle, movePoint, setPointFixed, deleteEntity, setLineLength, addAxisConstraint, mergePoint, setCornerAngle, cornerAngleOf } from '../src/mutate'
+import { addLineSegment, addRectangle, movePoint, setPointFixed, deleteEntity, setLineLength, addAxisConstraint, mergePoint, setCornerAngle, cornerAngleOf, addParallel, addPerpendicular, addEqualLength, addCoincident, addPointLineDistance } from '../src/mutate'
 
 describe('addLineSegment', () => {
   it('adds two points and a line, rounding coordinates', () => {
@@ -177,5 +177,110 @@ describe('setCornerAngle', () => {
     const doc = corner()
     expect(setCornerAngle(doc, createIdGen(), 'p0', 'L2', 'ghost', 1)).toBe(doc)
     expect(setCornerAngle(doc, createIdGen(), 'ghost', 'L2', 'L5', 1)).toBe(doc)
+  })
+})
+
+// Two separate segments: L2 = p0->p1, L5 = p3->p4.
+function twoLines() {
+  const gen = createIdGen()
+  let doc = addLineSegment(createDocument('m'), gen, 0, 0, 100, 0) // p0,p1,L2
+  doc = addLineSegment(doc, gen, 0, 50, 100, 50) // p3,p4,L5
+  return doc
+}
+
+describe('addParallel', () => {
+  it('appends a parallel constraint for two lines', () => {
+    const next = addParallel(twoLines(), createIdGen(50), 'L2', 'L5')
+    const cs = next.sketch.constraints.filter((c) => c.kind === 'parallel')
+    expect(cs).toHaveLength(1)
+    expect(cs[0]).toMatchObject({ kind: 'parallel', l1: 'L2', l2: 'L5' })
+  })
+  it('dedups by the unordered pair {l1,l2}', () => {
+    let doc = addParallel(twoLines(), createIdGen(50), 'L2', 'L5')
+    doc = addParallel(doc, createIdGen(60), 'L5', 'L2') // swapped order, same pair
+    expect(doc.sketch.constraints.filter((c) => c.kind === 'parallel')).toHaveLength(1)
+  })
+  it('returns the same doc when a line is missing', () => {
+    const doc = twoLines()
+    expect(addParallel(doc, createIdGen(), 'L2', 'ghost')).toBe(doc)
+  })
+})
+
+describe('addPerpendicular', () => {
+  it('appends a perpendicular constraint for two lines', () => {
+    const next = addPerpendicular(twoLines(), createIdGen(50), 'L2', 'L5')
+    const cs = next.sketch.constraints.filter((c) => c.kind === 'perpendicular')
+    expect(cs).toHaveLength(1)
+    expect(cs[0]).toMatchObject({ kind: 'perpendicular', l1: 'L2', l2: 'L5' })
+  })
+  it('dedups by the unordered pair {l1,l2}', () => {
+    let doc = addPerpendicular(twoLines(), createIdGen(50), 'L2', 'L5')
+    doc = addPerpendicular(doc, createIdGen(60), 'L5', 'L2')
+    expect(doc.sketch.constraints.filter((c) => c.kind === 'perpendicular')).toHaveLength(1)
+  })
+  it('returns the same doc when a line is missing', () => {
+    const doc = twoLines()
+    expect(addPerpendicular(doc, createIdGen(), 'ghost', 'L5')).toBe(doc)
+  })
+})
+
+describe('addEqualLength', () => {
+  it('appends an equalLength constraint for two lines', () => {
+    const next = addEqualLength(twoLines(), createIdGen(50), 'L2', 'L5')
+    const cs = next.sketch.constraints.filter((c) => c.kind === 'equalLength')
+    expect(cs).toHaveLength(1)
+    expect(cs[0]).toMatchObject({ kind: 'equalLength', l1: 'L2', l2: 'L5' })
+  })
+  it('dedups by the unordered pair {l1,l2}', () => {
+    let doc = addEqualLength(twoLines(), createIdGen(50), 'L2', 'L5')
+    doc = addEqualLength(doc, createIdGen(60), 'L5', 'L2')
+    expect(doc.sketch.constraints.filter((c) => c.kind === 'equalLength')).toHaveLength(1)
+  })
+  it('returns the same doc when a line is missing', () => {
+    const doc = twoLines()
+    expect(addEqualLength(doc, createIdGen(), 'L2', 'ghost')).toBe(doc)
+  })
+})
+
+describe('addCoincident', () => {
+  it('appends a coincident constraint between two points', () => {
+    const next = addCoincident(twoLines(), createIdGen(50), 'p1', 'p3')
+    const cs = next.sketch.constraints.filter((c) => c.kind === 'coincident')
+    expect(cs).toHaveLength(1)
+    expect(cs[0]).toMatchObject({ kind: 'coincident', a: 'p1', b: 'p3' })
+  })
+  it('dedups by the unordered pair {p1,p2}', () => {
+    let doc = addCoincident(twoLines(), createIdGen(50), 'p1', 'p3')
+    doc = addCoincident(doc, createIdGen(60), 'p3', 'p1') // swapped order, same pair
+    expect(doc.sketch.constraints.filter((c) => c.kind === 'coincident')).toHaveLength(1)
+  })
+  it('ignores when the two ids are equal', () => {
+    const doc = twoLines()
+    expect(addCoincident(doc, createIdGen(), 'p1', 'p1')).toBe(doc)
+  })
+  it('returns the same doc when a point is missing', () => {
+    const doc = twoLines()
+    expect(addCoincident(doc, createIdGen(), 'p1', 'ghost')).toBe(doc)
+  })
+})
+
+describe('addPointLineDistance', () => {
+  it('appends a pointLineDistance constraint, rounding the value', () => {
+    const next = addPointLineDistance(twoLines(), createIdGen(50), 'p1', 'L5', 2_000_000.6)
+    const cs = next.sketch.constraints.filter((c) => c.kind === 'pointLineDistance')
+    expect(cs).toHaveLength(1)
+    expect(cs[0]).toMatchObject({ kind: 'pointLineDistance', point: 'p1', line: 'L5', value: 2_000_001 })
+  })
+  it('updates the value for the same {point,line} pair instead of duplicating', () => {
+    let doc = addPointLineDistance(twoLines(), createIdGen(50), 'p1', 'L5', 2_000_000)
+    doc = addPointLineDistance(doc, createIdGen(60), 'p1', 'L5', 5_000_000)
+    const cs = doc.sketch.constraints.filter((c) => c.kind === 'pointLineDistance')
+    expect(cs).toHaveLength(1)
+    expect(cs[0]).toMatchObject({ value: 5_000_000 })
+  })
+  it('returns the same doc when the point or the line is missing', () => {
+    const doc = twoLines()
+    expect(addPointLineDistance(doc, createIdGen(), 'ghost', 'L5', 1_000_000)).toBe(doc)
+    expect(addPointLineDistance(doc, createIdGen(), 'p1', 'ghost', 1_000_000)).toBe(doc)
   })
 })

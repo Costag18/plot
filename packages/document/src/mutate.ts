@@ -97,6 +97,8 @@ function refsLine(c: Constraint, lineId: string): boolean {
     case 'equalLength':
     case 'angle':
       return c.l1 === lineId || c.l2 === lineId
+    case 'pointLineDistance':
+      return c.line === lineId
     case 'coincident':
       return false
   }
@@ -197,6 +199,90 @@ export function setLineLength(doc: PlotDocument, gen: IdGen, lineId: string, val
   }
   const c: Constraint = { id: gen('c'), kind: 'distance', line: lineId, value }
   return { ...doc, sketch: { ...doc.sketch, constraints: [...doc.sketch.constraints, c] } }
+}
+
+/**
+ * Add a constraint between two lines (parallel / perpendicular / equalLength).
+ * Both lines must exist; returns the document unchanged if either is missing or a
+ * constraint of the same kind already exists for the unordered pair {l1,l2}.
+ */
+function addLinePairConstraint(
+  doc: PlotDocument,
+  gen: IdGen,
+  kind: 'parallel' | 'perpendicular' | 'equalLength',
+  l1: string,
+  l2: string,
+): PlotDocument {
+  const s = doc.sketch
+  if (!s.lines[l1] || !s.lines[l2]) return doc
+  const exists = s.constraints.some(
+    (c) =>
+      c.kind === kind &&
+      ((c.l1 === l1 && c.l2 === l2) || (c.l1 === l2 && c.l2 === l1)),
+  )
+  if (exists) return doc
+  const c: Constraint = { id: gen('c'), kind, l1, l2 }
+  return { ...doc, sketch: { ...s, constraints: [...s.constraints, c] } }
+}
+
+export function addParallel(doc: PlotDocument, gen: IdGen, l1: string, l2: string): PlotDocument {
+  return addLinePairConstraint(doc, gen, 'parallel', l1, l2)
+}
+
+export function addPerpendicular(doc: PlotDocument, gen: IdGen, l1: string, l2: string): PlotDocument {
+  return addLinePairConstraint(doc, gen, 'perpendicular', l1, l2)
+}
+
+export function addEqualLength(doc: PlotDocument, gen: IdGen, l1: string, l2: string): PlotDocument {
+  return addLinePairConstraint(doc, gen, 'equalLength', l1, l2)
+}
+
+/**
+ * Add a coincident constraint between two points. Both points must exist; returns
+ * the document unchanged if either is missing, the ids are equal, or a coincident
+ * constraint already exists for the unordered pair {p1,p2}.
+ */
+export function addCoincident(doc: PlotDocument, gen: IdGen, p1: string, p2: string): PlotDocument {
+  if (p1 === p2) return doc
+  const s = doc.sketch
+  if (!s.points[p1] || !s.points[p2]) return doc
+  const exists = s.constraints.some(
+    (c) =>
+      c.kind === 'coincident' &&
+      ((c.a === p1 && c.b === p2) || (c.a === p2 && c.b === p1)),
+  )
+  if (exists) return doc
+  const c: Constraint = { id: gen('c'), kind: 'coincident', a: p1, b: p2 }
+  return { ...doc, sketch: { ...s, constraints: [...s.constraints, c] } }
+}
+
+/**
+ * Constrain the perpendicular distance (µm, ≥ 0) from a point to a line. If a
+ * pointLineDistance constraint already exists for the same {point,line} pair its
+ * value is updated; otherwise a new constraint is appended. Returns the document
+ * unchanged if the point or the line is missing.
+ */
+export function addPointLineDistance(
+  doc: PlotDocument,
+  gen: IdGen,
+  point: string,
+  line: string,
+  valueUm: number,
+): PlotDocument {
+  const s = doc.sketch
+  if (!s.points[point] || !s.lines[line]) return doc
+  const value = round(valueUm)
+  const idx = s.constraints.findIndex(
+    (c) => c.kind === 'pointLineDistance' && c.point === point && c.line === line,
+  )
+  if (idx >= 0) {
+    const constraints = s.constraints.map((c, i) =>
+      i === idx && c.kind === 'pointLineDistance' ? { ...c, value } : c,
+    )
+    return { ...doc, sketch: { ...s, constraints } }
+  }
+  const c: Constraint = { id: gen('c'), kind: 'pointLineDistance', point, line, value }
+  return { ...doc, sketch: { ...s, constraints: [...s.constraints, c] } }
 }
 
 export function mergePoint(doc: PlotDocument, keepId: string, dropId: string): PlotDocument {

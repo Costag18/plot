@@ -137,5 +137,12 @@ function cloneConstraint(
         ? { id: gen('c'), kind: 'angle', l1, l2, vertex, value: c.value }
         : null
     }
+    case 'pointLineDistance': {
+      const point = pointMap.get(c.point)
+      const line = lineMap.get(c.line)
+      return point && line
+        ? { id: gen('c'), kind: 'pointLineDistance', point, line, value: c.value }
+        : null
+    }
   }
 }
