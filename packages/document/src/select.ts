@@ -30,6 +30,27 @@ export function translateEntities(doc: PlotDocument, ids: readonly string[], dx:
   return { ...doc, sketch: { ...doc.sketch, points } }
 }
 
+export function rotateEntities(
+  doc: PlotDocument,
+  ids: readonly string[],
+  cx: number,
+  cy: number,
+  angleRad: number,
+): PlotDocument {
+  const affected = affectedPointIds(doc.sketch, ids)
+  const cos = Math.cos(angleRad)
+  const sin = Math.sin(angleRad)
+  const points = { ...doc.sketch.points }
+  for (const id of affected) {
+    const p = points[id]
+    if (!p) continue
+    const dx = p.x - cx
+    const dy = p.y - cy
+    points[id] = { ...p, x: round(cx + dx * cos - dy * sin), y: round(cy + dx * sin + dy * cos) }
+  }
+  return { ...doc, sketch: { ...doc.sketch, points } }
+}
+
 export function allSelectableIds(sketch: Sketch): string[] {
   return [...Object.keys(sketch.points), ...Object.keys(sketch.lines)]
 }
