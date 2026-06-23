@@ -10,6 +10,7 @@ import type { Hit } from './hittest'
 export type Draft =
   | { kind: 'line'; a: Vec2; b: Vec2 }
   | { kind: 'rect'; a: Vec2; b: Vec2 }
+  | { kind: 'polygon'; pts: Vec2[] }
 
 export type SnapHint =
   | { kind: 'horizontal'; at: Vec2 }
@@ -202,12 +203,21 @@ export class CanvasRenderer {
       ctx.setLineDash([6, 4])
       ctx.strokeStyle = COLORS.hover
       ctx.lineWidth = 1.5
-      const a = worldToScreen(c, s.draft.a)
-      const b = worldToScreen(c, s.draft.b)
       if (s.draft.kind === 'line') {
+        const a = worldToScreen(c, s.draft.a)
+        const b = worldToScreen(c, s.draft.b)
         line(ctx, a.x, a.y, b.x, b.y)
-      } else {
+      } else if (s.draft.kind === 'rect') {
+        const a = worldToScreen(c, s.draft.a)
+        const b = worldToScreen(c, s.draft.b)
         ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y))
+      } else if (s.draft.kind === 'polygon') {
+        const p = s.draft.pts
+        for (let i = 0; i + 1 < p.length; i++) {
+          const a = worldToScreen(c, p[i]!)
+          const b = worldToScreen(c, p[i + 1]!)
+          line(ctx, a.x, a.y, b.x, b.y)
+        }
       }
       ctx.restore()
     }
