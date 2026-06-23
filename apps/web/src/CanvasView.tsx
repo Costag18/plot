@@ -267,16 +267,24 @@ export function CanvasView() {
   // Track Space held so left-drag pans (leaving plain left-drag for marquee).
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
-      if (e.key === ' ') spaceDownRef.current = true
+      if (e.key === ' ') {
+        spaceDownRef.current = true
+        e.preventDefault()
+      }
     }
     const onUp = (e: KeyboardEvent) => {
       if (e.key === ' ') spaceDownRef.current = false
     }
+    const onBlur = () => {
+      spaceDownRef.current = false
+    }
     window.addEventListener('keydown', onDown)
     window.addEventListener('keyup', onUp)
+    window.addEventListener('blur', onBlur)
     return () => {
       window.removeEventListener('keydown', onDown)
       window.removeEventListener('keyup', onUp)
+      window.removeEventListener('blur', onBlur)
     }
   }, [])
 
@@ -641,6 +649,15 @@ export function CanvasView() {
   }, [])
 
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // Middle-button release: just clean up pan state; never fall through to draw paths.
+    if (e.button === 1) {
+      if (panningRef.current) {
+        try { e.currentTarget.releasePointerCapture(e.pointerId) } catch {}
+      }
+      clearPointerState()
+      return
+    }
+
     const pos = getCanvasPos(e)
     const state = useEditor.getState()
     const tool = state.tool

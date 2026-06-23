@@ -179,6 +179,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   nudge: async (dx, dy) => {
     const s = get()
     if (s.selection.size === 0) return
+    ++solveSeq
     const next = translateEntities(s.history.present, [...s.selection], dx, dy)
     await get().solveAndCommit(next)
   },
