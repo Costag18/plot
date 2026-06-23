@@ -17,5 +17,8 @@
     "@plot/core": "workspace:*",
     "@salusoft89/planegcs": "^1.1.7",
     "comlink": "^4.4.1"
+  },
+  "devDependencies": {
+    "@plot/document": "workspace:*"
   }
 }

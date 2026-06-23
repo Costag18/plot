@@ -83,6 +83,12 @@ function pushConstraint(
       out.push({ id: consId(), type: 'equal_length', l1_id, l2_id })
       break
     }
+    case 'angle': {
+      const l1_id = lineFor(c.l1)
+      const l2_id = lineFor(c.l2)
+      out.push({ id: consId(), type: 'l2l_angle_ll', l1_id, l2_id, angle: c.value })
+      break
+    }
   }
 }
 
